@@ -1,0 +1,18 @@
+{
+  "name": "Amanda's Med Tracker",
+  "short_name": "Meds",
+  "description": "Post-surgery medication tracker for Amanda",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#2d3436",
+  "theme_color": "#2d3436",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
