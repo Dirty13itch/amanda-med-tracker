@@ -698,7 +698,7 @@ function renderCards() {
         <div class="card-status"><span class="dot ${statusDot}"></span>${statusText}</div>
         <div class="card-timer">${last?`Last: ${fmt(last.time,'time')} (${minsToHM(ago)} ago)`:'No doses logged yet'}</div>
         <div class="timer-bar"><div class="timer-fill" style="width:${pct}%;background:${available?_cssSuccess:med.color}"></div></div>
-        ${med.maxDoses ? `<div class="completion-dots">${Array.from({length:med.maxDoses},(_,i)=>`<span class="cd-dot" style="border-color:${med.color};${i<todayCount.length?'background:'+med.color:''}"></span>`).join('')}<span class="cd-label">${todayCount.length >= med.maxDoses ? 'All done!' : todayCount.length === 0 ? '0 of '+med.maxDoses+' today' : todayCount.length+' of '+med.maxDoses+' — '+(med.maxDoses-todayCount.length)+' to go'}</span></div>` : `<div class="card-today">Today: ${todayTabs} tab${todayTabs!==1?'s':''}${todayMg?' ('+todayMg+'mg)':''}</div>`}
+        ${med.maxDoses ? `<div class="completion-dots">${Array.from({length:med.maxDoses},(_,i)=>`<span class="cd-dot" style="border-color:${med.color};${i<todayCount.length?'background:'+med.color:''}"></span>`).join('')}<span class="cd-label">${todayCount.length >= med.maxDoses ? 'All done!' : todayCount.length === 0 ? '0 of '+med.maxDoses+' today' : todayCount.length+' of '+med.maxDoses+' — '+(med.maxDoses-todayCount.length)+' to go'}</span></div>` : `<div class="card-today">Today: ${todayTabs} tab${todayTabs!==1?'s':''}${med.id==='tylenol'?' ('+tylenol24h()+'mg / 4000mg 24hrs)':(todayMg?' ('+todayMg+'mg)':'')}</div>`}
         ${warnsHtml}
         <button class="btn-reminder" onclick="event.stopPropagation();downloadReminder('${med.id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="7"/><path d="M12 9v4l2.5 1.5"/><path d="M5 3L2 6M22 6l-3-3"/></svg>Set Reminder</button>
         <button class="btn-log" style="background:${med.color}" onclick="handleLog('${med.id}')" ${disabled?'disabled':''}>${disabled?'Limit Reached':'Log Dose'}</button>
@@ -716,15 +716,18 @@ function renderLog() {
   const todayTotal=state.doses.filter(d=>fmt(d.time,'date')===t).reduce((s,d)=>s+d.tabs,0);
   countEl.textContent = todayTotal > 0 ? `(${todayTotal} today)` : '';
   if(!sorted.length){previewEl.innerHTML='<div class="log-empty">No doses logged yet</div>';fullEl.innerHTML='';return;}
-  let tylRunning=0;
   const tylSorted=[...state.doses].filter(d=>d.medId==='tylenol').sort((a,b)=>new Date(a.time)-new Date(b.time));
   const tylTotals={};
-  tylSorted.forEach(d=>{tylRunning+=d.mg;tylTotals[d.id]=tylRunning;});
+  tylSorted.forEach(d=>{
+    const doseTime=new Date(d.time).getTime();
+    const cutoff=doseTime-24*3600000;
+    tylTotals[d.id]=tylSorted.filter(t=>new Date(t.time).getTime()>=cutoff&&new Date(t.time).getTime()<=doseTime).reduce((s,t)=>s+t.mg,0);
+  });
   const renderEntry = d => {
     const med=getMed(d.medId);
     const tabLabel=d.tabs>1?`${d.tabs} tabs`:'1 tab';
     const mgLabel=d.mg?` (${d.mg}mg)`:'';
-    const tylNote=d.medId==='tylenol'?`<div class="log-tylenol-note">Running total: ${tylTotals[d.id]||0}mg</div>`:'';
+    const tylNote=d.medId==='tylenol'?`<div class="log-tylenol-note">24hr total: ${tylTotals[d.id]||0}mg / 4000mg</div>`:'';
     return `<div class="log-entry">
       <div class="log-time">${fmt(d.time,'time')}</div>
       <div class="log-dot" style="background:${med?med.color:'#999'}"></div>
