@@ -159,7 +159,7 @@ body.bedside .ts-label{font-size:15px}
 /* Bedside / Night Mode */
 body.bedside{--bg:#000;--card:#0d0d0d;--text:#e8c9a0;--muted:#7a6248;--border:#1a1a1a;--shadow:none;
   --danger-bg:#1a0a0a;--danger-border:#a04030;--warn-bg:#1a1408;--warn-border:#a08030;--success:#b08840}
-body.bedside header{background:#000;box-shadow:none}
+body.bedside header{background:#000;box-shadow:none;color:var(--text)}
 body.bedside .header-meta span:not(.clock){display:none}
 body.bedside .header-meta .clock{color:#e8c9a0}
 body.bedside .warnings,body.bedside .tracked-total-section,body.bedside .med-cards,body.bedside .log-section,body.bedside .actions{display:none}
@@ -185,6 +185,29 @@ body.bedside .nqi-detail .nqi-btn-log{padding:18px;font-size:18px;min-height:56p
 body.bedside .nqi-detail .nqi-btn-reminder{font-size:15px;padding:12px}
 body.bedside .nqi-detail .nqi-detail-dose{font-size:15px}
 body.bedside .nqi-detail .nqi-detail-status{font-size:17px}
+/* Bedside: header buttons match amber theme */
+body.bedside .settings-btn{color:var(--muted)}
+body.bedside .settings-btn:hover{color:var(--text)}
+/* Bedside: modal visibility — prevent black-on-black */
+body.bedside .modal-overlay{background:rgba(0,0,0,.85)}
+body.bedside .modal{background:#151515;border:1px solid #2a2a2a}
+body.bedside .modal-handle{background:#444}
+/* Bedside: toast & update banner */
+body.bedside .toast{background:#151515;color:var(--text);border:1px solid #2a2a2a}
+body.bedside .update-banner{background:#151515;border:1px solid #2a2a2a}
+body.bedside .update-banner button{background:var(--success)}
+/* Bedside: softer alert banners */
+body.bedside .alert-banner.ab-ready{background:linear-gradient(135deg,#0a2a1a,#0a2a2a)}
+body.bedside .alert-banner.ab-overdue{background:linear-gradient(135deg,#2a0a0a,#200808)}
+/* Bedside: hide empty state */
+body.bedside .empty-state{display:none}
+/* Bedside: settings overlay inherits vars but ensure contrast */
+body.bedside .settings-overlay{background:#000}
+body.bedside .med-list-item{background:#111;border:1px solid #1a1a1a}
+body.bedside .med-form{background:#111;border:1px solid #1a1a1a}
+body.bedside .settings-field input,body.bedside .settings-field select,body.bedside .settings-field textarea{background:#0a0a0a;border-color:#2a2a2a}
+body.bedside .config-share .btn-export{background:var(--text);color:#000}
+body.bedside .config-share .btn-import{background:#1a1a1a;border:1px solid #2a2a2a}
 .bedside-toggle{background:none;border:none;color:rgba(255,255,255,.6);font-size:20px;cursor:pointer;padding:4px 8px;-webkit-tap-highlight-color:transparent;line-height:1;border-radius:4px}
 .bedside-toggle:hover{color:#fff}
 .bedside-toggle.active{color:#ffeaa7}
@@ -486,9 +509,9 @@ if (!CONFIG) {
 // Derive runtime arrays from config
 let MEDS = CONFIG.meds;
 let WARNINGS = CONFIG.warnings;
-let RECOVERY_NOTES = CONFIG.recoveryNotes.map(n => ({
+let RECOVERY_NOTES = (CONFIG.recoveryNotes||[]).filter(n=>n&&n.text).map(n => ({
   ...n,
-  text: typeof n.text === 'function' ? n.text : day => n.text.replace('{day}', day)
+  text: typeof n.text === 'function' ? n.text : day => (n.text||'').replace('{day}', day)
 }));
 const SURGERY_DATE = CONFIG.eventDate; // backward compat for existing code
 // CSS variable string for inline styles — browser resolves at render time, no getComputedStyle needed
@@ -780,7 +803,8 @@ function renderDayCounter() {
   const el=document.getElementById('day-counter');
   if(!CONFIG.eventDate){el.textContent='';return;}
   const diff = Math.floor((now()-new Date(CONFIG.eventDate+'T00:00:00'))/86400000);
-  el.textContent = diff===0?(CONFIG.eventLabel||'Event')+' Day':`Day ${diff} Post-Op`;
+  const evtLabel = CONFIG.eventLabel || 'Event';
+  el.textContent = diff===0 ? evtLabel+' Day' : `Day ${diff} post-${evtLabel.toLowerCase()}`;
 }
 function renderTrackedTotals() {
   const container=document.getElementById('tracked-totals');
@@ -818,7 +842,12 @@ function renderWarnings() {
   MEDS.filter(m=>m.conflictsWith).forEach(med=>{
     const other=getMed(med.conflictsWith);
     if(!other) return;
-    const existsAlready=WARNINGS.some(w=>w.title.includes(med.name)&&w.title.includes(other.name));
+    const existsAlready=WARNINGS.some(w=>{
+      const t=w.title.toLowerCase();
+      const matchMed=t.includes(med.name.toLowerCase())||(med.brand&&t.includes(med.brand.toLowerCase()));
+      const matchOther=t.includes(other.name.toLowerCase())||(other.brand&&t.includes(other.brand.toLowerCase()));
+      return matchMed&&matchOther;
+    });
     if(!existsAlready) {
       html+=`<div class="alert alert-warn"><strong>${other.name} + ${med.name} Separation</strong>Must wait at least ${med.conflictMin} minutes between these two medications</div>`;
     }
@@ -851,7 +880,7 @@ function renderCards() {
     if(atMax){statusDot='red';statusText=`${todayCount.length}/${med.maxDoses} doses today (complete)`;}
     if(atDailyLimit){statusDot='red';statusText=`24hr limit reached (${med.maxDaily}mg)`;}
     const disabled=atDailyLimit||atMax;
-    const warnsHtml=med.warns.map(w=>`<div class="card-warn">${w}</div>`).join('');
+    const warnsHtml=(med.warns||[]).map(w=>`<div class="card-warn">${w}</div>`).join('');
     return `<div class="card" role="listitem" aria-label="${med.name} medication card">
       <div class="card-accent" style="background:${med.color}"></div>
       <div class="card-body">
@@ -1102,9 +1131,9 @@ function handleLog(medId) {
   try {
     const med=getMed(medId);
     if(!med){console.error('handleLog: unknown med',medId);return;}
-    // Config-driven modal routing
-    if(med.maxTabs>1||findPairedMeds(medId).length>0) return showMultiTabModal(med);
+    // Config-driven modal routing (trackTotal checked first — it has its own tab selector)
     if(med.trackTotal) return showTrackedModal(med);
+    if(med.maxTabs>1||findPairedMeds(medId).length>0) return showMultiTabModal(med);
     if(med.conflictsWith) return showConflictModal(med);
     // Simple confirm for others
     const last=lastDose(medId);
@@ -1273,6 +1302,7 @@ function handleExport() {
   a.href=URL.createObjectURL(blob);
   a.download='med-log-'+todayStr()+'.txt';
   a.click();
+  URL.revokeObjectURL(a.href);
 }
 function handleClear() {
   showModal(`<h3>Clear all data?</h3>
@@ -1452,7 +1482,8 @@ function renderMedForm(med) {
     </div>
     <div class="med-form-row">
       <div class="settings-field"><label>Interval</label>
-        <select id="mf-interval"><option value="120"${m.intervalMin===120?' selected':''}>Every 2 hours</option><option value="240"${m.intervalMin===240?' selected':''}>Every 4 hours</option><option value="360"${m.intervalMin===360?' selected':''}>Every 6 hours</option><option value="480"${m.intervalMin===480?' selected':''}>Every 8 hours</option><option value="720"${m.intervalMin===720?' selected':''}>Every 12 hours</option><option value="1440"${m.intervalMin===1440?' selected':''}>Once daily</option><option value="custom"${![120,240,360,480,720,1440].includes(m.intervalMin)?' selected':''}>Custom</option></select>
+        <select id="mf-interval" onchange="toggleCustomInterval()"><option value="120"${m.intervalMin===120?' selected':''}>Every 2 hours</option><option value="240"${m.intervalMin===240?' selected':''}>Every 4 hours</option><option value="360"${m.intervalMin===360?' selected':''}>Every 6 hours</option><option value="480"${m.intervalMin===480?' selected':''}>Every 8 hours</option><option value="720"${m.intervalMin===720?' selected':''}>Every 12 hours</option><option value="1440"${m.intervalMin===1440?' selected':''}>Once daily</option><option value="custom"${![120,240,360,480,720,1440].includes(m.intervalMin)?' selected':''}>Custom</option></select>
+        <input type="number" id="mf-customInterval" min="1" placeholder="Minutes" value="${![120,240,360,480,720,1440].includes(m.intervalMin)?m.intervalMin:''}" style="margin-top:4px;${[120,240,360,480,720,1440].includes(m.intervalMin)?'display:none':''}">
       </div>
       <div class="settings-field"><label>Purpose</label><input type="text" id="mf-purpose" value="${m.purpose}" placeholder="e.g. Pain Relief"></div>
     </div>
@@ -1496,6 +1527,11 @@ function selectMedColor(el, color) {
   el.classList.add('active');
   _selectedMedColor = color;
 }
+function toggleCustomInterval() {
+  const sel = document.getElementById('mf-interval');
+  const inp = document.getElementById('mf-customInterval');
+  if(sel && inp) { inp.style.display = sel.value==='custom' ? '' : 'none'; }
+}
 function toggleAdvanced() {
   const content = document.getElementById('adv-content');
   const chevron = document.getElementById('adv-chevron');
@@ -1535,8 +1571,14 @@ function saveMedForm(index) {
   const maxTabs = parseInt(document.getElementById('mf-maxTabs').value);
   if(isNaN(maxTabs)||maxTabs<1){ showFieldError('mf-maxTabs','Must be at least 1'); hasErrors=true; }
   const intervalSelect = document.getElementById('mf-interval');
-  let intervalMin = parseInt(intervalSelect.value);
-  if(isNaN(intervalMin)||intervalMin<=0){ showFieldError('mf-interval','Select a valid interval'); hasErrors=true; intervalMin=240; }
+  let intervalMin;
+  if(intervalSelect.value==='custom') {
+    intervalMin = parseInt(document.getElementById('mf-customInterval').value);
+    if(isNaN(intervalMin)||intervalMin<=0){ showFieldError('mf-customInterval','Enter interval in minutes (must be > 0)'); hasErrors=true; intervalMin=240; }
+  } else {
+    intervalMin = parseInt(intervalSelect.value);
+    if(isNaN(intervalMin)||intervalMin<=0){ showFieldError('mf-interval','Select a valid interval'); hasErrors=true; intervalMin=240; }
+  }
   // Validate track total
   const trackTotal = document.getElementById('mf-trackTotal').value==='1';
   if(trackTotal) {
@@ -1553,7 +1595,7 @@ function saveMedForm(index) {
 
   const color = _selectedMedColor || nextColor();
   const med = {
-    id: index >= 0 ? MEDS[index].id : name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/-+$/,''),
+    id: index >= 0 ? MEDS[index].id : (name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/-+$/,'') || 'med-'+Date.now()),
     name, brand: document.getElementById('mf-brand').value.trim(),
     dose: document.getElementById('mf-dose').value.trim(),
     perTab: perTab||0,
@@ -1711,8 +1753,8 @@ function applyImport() {
     if(data.eventLabel) CONFIG.eventLabel = data.eventLabel;
     MEDS = CONFIG.meds;
     WARNINGS = CONFIG.warnings;
-    RECOVERY_NOTES = (CONFIG.recoveryNotes||[]).map(n=>({
-      ...n, text: typeof n.text === 'function' ? n.text : day => n.text.replace('{day}', day)
+    RECOVERY_NOTES = (CONFIG.recoveryNotes||[]).filter(n=>n&&n.text).map(n=>({
+      ...n, text: typeof n.text === 'function' ? n.text : day => (n.text||'').replace('{day}', day)
     }));
     saveConfig(CONFIG);
     showToast('Setup imported — '+data.meds.length+' meds loaded!');
@@ -1780,9 +1822,9 @@ function selectTemplate(key) {
   }
   MEDS = CONFIG.meds;
   WARNINGS = CONFIG.warnings;
-  RECOVERY_NOTES = CONFIG.recoveryNotes.map(n=>({
+  RECOVERY_NOTES = (CONFIG.recoveryNotes||[]).filter(n=>n&&n.text).map(n=>({
     ...n,
-    text: typeof n.text === 'function' ? n.text : day => n.text.replace('{day}', day)
+    text: typeof n.text === 'function' ? n.text : day => (n.text||'').replace('{day}', day)
   }));
   saveConfig(CONFIG);
   // Close welcome
@@ -1793,10 +1835,6 @@ function selectTemplate(key) {
 
 // Check for first-run
 const _isFirstRun = !localStorage.getItem(CONFIG_KEY) && !localStorage.getItem('amanda-meds-v1');
-
-// Empty state for renderCards when no meds
-const _origRenderCards = typeof renderCards === 'function' ? renderCards : null;
-// We'll patch renderCards inline — check added in the function itself
 
 // Dynamic header based on config
 function initAppHeader() {
