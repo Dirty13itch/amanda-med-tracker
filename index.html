@@ -3,14 +3,14 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-<title>Amanda's Med Tracker</title>
+<title>Med Tracker</title>
 <!-- PWA -->
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#2d3436">
 <!-- iOS home screen -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Amanda's Meds">
+<meta name="apple-mobile-web-app-title" content="Med Tracker" id="apple-title">
 <link rel="apple-touch-icon" href="/icon.svg">
 <!-- Android -->
 <meta name="mobile-web-app-capable" content="yes">
@@ -44,12 +44,12 @@ main{max-width:800px;margin:0 auto;padding:12px}
 .alert-danger{background:var(--danger-bg);border-color:var(--danger-border);color:var(--danger-border)}
 .alert-warn{background:var(--warn-bg);border-color:var(--warn-border)}
 .alert strong{display:block;font-size:15px;margin-bottom:2px}
-.tylenol-section{background:var(--card);border-radius:var(--radius);padding:14px 16px;margin-bottom:12px;box-shadow:var(--shadow)}
-.tylenol-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
-.tylenol-header h3{font-size:15px;font-weight:600}
-.tylenol-amount{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums}
-.tylenol-bar{height:14px;background:var(--border);border-radius:7px;overflow:hidden}
-.tylenol-fill{height:100%;border-radius:7px;transition:width .4s ease,background .4s ease;min-width:0}
+.tracked-total-section{background:var(--card);border-radius:var(--radius);padding:14px 16px;margin-bottom:12px;box-shadow:var(--shadow)}
+.tracked-total-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.tracked-total-header h3{font-size:15px;font-weight:600}
+.tracked-total-amount{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums}
+.tracked-total-bar{height:14px;background:var(--border);border-radius:7px;overflow:hidden}
+.tracked-total-fill{height:100%;border-radius:7px;transition:width .4s ease,background .4s ease;min-width:0}
 .med-cards{display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:16px}
 @media(min-width:640px){.med-cards{grid-template-columns:1fr 1fr}}
 .card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column}
@@ -80,7 +80,7 @@ main{max-width:800px;margin:0 auto;padding:12px}
 .log-remove{background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;padding:4px 8px;border-radius:4px;flex-shrink:0;-webkit-tap-highlight-color:transparent}
 .log-remove:hover{color:var(--danger-border);background:var(--danger-bg)}
 .log-empty{text-align:center;color:var(--muted);padding:20px;font-size:14px}
-.log-tylenol-note{font-size:12px;color:var(--tyl);font-weight:600}
+.log-tracked-note{font-size:12px;font-weight:600}
 .actions{display:flex;gap:8px;justify-content:center;padding:12px 0 32px}
 .actions button{padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--muted);font-size:13px;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .actions button:hover{border-color:var(--muted)}
@@ -162,7 +162,7 @@ body.bedside{--bg:#000;--card:#0d0d0d;--text:#e8c9a0;--muted:#7a6248;--border:#1
 body.bedside header{background:#000;box-shadow:none}
 body.bedside .header-meta span:not(.clock){display:none}
 body.bedside .header-meta .clock{color:#e8c9a0}
-body.bedside .warnings,body.bedside .tylenol-section,body.bedside .med-cards,body.bedside .log-section,body.bedside .actions{display:none}
+body.bedside .warnings,body.bedside .tracked-total-section,body.bedside .med-cards,body.bedside .log-section,body.bedside .actions{display:none}
 body.bedside .next-up-card{padding:28px}
 body.bedside .nuc-name{font-size:28px}
 body.bedside .nuc-dose{font-size:18px}
@@ -236,30 +236,107 @@ body.bedside .recovery-note,body.bedside .warnings{display:none}
 .card-warn{font-size:13px}
 .card{transition:transform .15s ease,box-shadow .15s ease}
 .card:active{transform:scale(.985)}
-.timer-fill,.nuc-timer-fill,.tylenol-fill{transition:width 1s linear}
+.timer-fill,.nuc-timer-fill,.tracked-total-fill{transition:width 1s linear}
 .btn-log,.btn-log-next{transition:opacity .2s,transform .1s,background .2s}
 *:focus-visible{outline:2px solid var(--success);outline-offset:2px;border-radius:4px}
 body.bedside *:focus-visible{outline-color:#ffeaa7}
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:0.01ms!important;animation-iteration-count:1!important;transition-duration:0.01ms!important}
 }
+/* Settings UI */
+.settings-overlay{position:fixed;inset:0;background:var(--bg);z-index:300;overflow-y:auto;display:none;-webkit-overflow-scrolling:touch}
+.settings-overlay.open{display:block}
+.settings-panel{max-width:600px;margin:0 auto;padding:16px;padding-bottom:calc(32px + env(safe-area-inset-bottom,0px))}
+.settings-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;padding:4px 0}
+.settings-header h2{font-size:20px;font-weight:700}
+.settings-close{background:none;border:none;font-size:28px;color:var(--muted);cursor:pointer;padding:4px 8px;-webkit-tap-highlight-color:transparent}
+.settings-section{margin-bottom:24px}
+.settings-section h3{font-size:16px;font-weight:700;margin-bottom:12px;color:var(--text)}
+.settings-field{margin-bottom:12px}
+.settings-field label{display:block;font-size:13px;font-weight:600;color:var(--muted);margin-bottom:4px}
+.settings-field input,.settings-field select,.settings-field textarea{width:100%;padding:10px 12px;border:2px solid var(--border);border-radius:8px;font-size:15px;background:var(--card);color:var(--text);font-family:inherit}
+.settings-field input:focus,.settings-field select:focus,.settings-field textarea:focus{border-color:var(--text);outline:none}
+.settings-field textarea{resize:vertical;min-height:60px}
+.settings-field .hint{font-size:12px;color:var(--muted);margin-top:2px}
+.med-list-item{display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.med-list-item:active{background:var(--border)}
+.med-list-swatch{width:14px;height:14px;border-radius:50%;flex-shrink:0}
+.med-list-info{flex:1}
+.med-list-name{font-weight:600;font-size:15px}
+.med-list-dose{font-size:13px;color:var(--muted)}
+.med-list-actions{display:flex;gap:4px}
+.med-list-actions button{background:none;border:none;font-size:16px;color:var(--muted);cursor:pointer;padding:6px 8px;border-radius:4px;-webkit-tap-highlight-color:transparent}
+.med-list-actions button:hover{color:var(--text);background:var(--border)}
+.btn-add-med{width:100%;padding:12px;border:2px dashed var(--border);border-radius:var(--radius);background:none;color:var(--muted);font-size:14px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent;margin-top:8px}
+.btn-add-med:hover{border-color:var(--muted);color:var(--text)}
+.med-form{background:var(--card);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);margin-bottom:16px}
+.med-form h3{font-size:17px;font-weight:700;margin-bottom:14px}
+.med-form-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.color-swatches{display:flex;flex-wrap:wrap;gap:6px}
+.color-swatch{width:32px;height:32px;border-radius:50%;border:3px solid transparent;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:border-color .15s}
+.color-swatch.active{border-color:var(--text)}
+.color-swatch:hover{border-color:var(--muted)}
+.med-form-actions{display:flex;gap:8px;margin-top:14px}
+.med-form-actions button{flex:1;padding:12px;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;border:none;-webkit-tap-highlight-color:transparent}
+.settings-btn{background:none;border:none;color:rgba(255,255,255,.6);font-size:18px;cursor:pointer;padding:4px 8px;-webkit-tap-highlight-color:transparent;line-height:1;border-radius:4px}
+.settings-btn:hover{color:#fff}
+.advanced-toggle{background:none;border:none;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;padding:8px 0;-webkit-tap-highlight-color:transparent;display:flex;align-items:center;gap:6px}
+.advanced-content{overflow:hidden;max-height:0;transition:max-height .3s ease;opacity:0}
+.advanced-content.open{max-height:800px;opacity:1;transition:max-height .3s ease,opacity .2s ease}
+/* Welcome / First-Run */
+.welcome-overlay{position:fixed;inset:0;background:var(--bg);z-index:400;display:flex;align-items:center;justify-content:center;padding:20px}
+.welcome-card{background:var(--card);border-radius:20px;box-shadow:0 8px 40px rgba(0,0,0,.15);padding:32px 28px;max-width:420px;width:100%;text-align:center}
+.welcome-card h2{font-size:24px;font-weight:700;margin-bottom:8px}
+.welcome-card p{font-size:15px;color:var(--muted);margin-bottom:20px;line-height:1.5}
+.welcome-card input{width:100%;padding:12px;border:2px solid var(--border);border-radius:10px;font-size:16px;background:var(--card);color:var(--text);font-family:inherit;text-align:center;margin-bottom:16px}
+.welcome-card input:focus{border-color:var(--text);outline:none}
+.welcome-templates{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+.welcome-tpl{padding:14px;border:2px solid var(--border);border-radius:12px;background:var(--card);cursor:pointer;text-align:left;-webkit-tap-highlight-color:transparent;transition:border-color .2s,background .15s}
+.welcome-tpl:hover,.welcome-tpl:active{border-color:var(--text);background:var(--bg)}
+.welcome-tpl strong{display:block;font-size:15px;margin-bottom:2px}
+.welcome-tpl span{font-size:13px;color:var(--muted)}
+.welcome-btn{width:100%;padding:14px;border:none;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;color:#fff;background:linear-gradient(135deg,#00b894,#00cec9);-webkit-tap-highlight-color:transparent}
+.empty-state{text-align:center;padding:40px 20px;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:16px}
+.empty-state p{color:var(--muted);font-size:15px;margin-bottom:16px}
+.empty-state button{padding:12px 24px;border:2px dashed var(--border);border-radius:10px;background:none;color:var(--muted);font-size:15px;font-weight:600;cursor:pointer}
+/* Config Export/Import */
+.config-share{display:flex;gap:8px;margin-bottom:8px}
+.config-share button{flex:1;padding:10px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;border:none;-webkit-tap-highlight-color:transparent}
+.config-share .btn-export{background:var(--text);color:var(--bg)}
+.config-share .btn-import{background:var(--border);color:var(--text)}
+.import-area{margin-bottom:12px}
+.import-area textarea{width:100%;padding:10px;border:2px solid var(--border);border-radius:8px;font-size:13px;font-family:monospace;background:var(--card);color:var(--text);resize:vertical;min-height:60px}
+.import-area textarea:focus{border-color:var(--text);outline:none}
+.import-preview{background:var(--card);border-radius:8px;padding:12px;margin-top:8px;font-size:13px;border:1px solid var(--border)}
+.import-preview strong{display:block;margin-bottom:4px}
+.import-actions{display:flex;gap:8px;margin-top:8px}
+.import-actions button{flex:1;padding:10px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;border:none}
+/* Validation errors */
+.field-error{border-color:var(--danger-border)!important}
+.error-msg{font-size:12px;color:var(--danger-border);margin-top:2px}
+.toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(20px);background:#2d3436;color:#fff;padding:10px 20px;border-radius:10px;font-size:14px;font-weight:600;z-index:500;opacity:0;transition:opacity .3s,transform .3s;pointer-events:none}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 @media print{
   header{position:static;background:#333!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .btn-log,.log-remove,.actions,.next-up{display:none!important}
   .card{break-inside:avoid;box-shadow:none;border:1px solid #ccc}
   .modal-overlay{display:none!important}
   body{background:#fff}main{max-width:100%}
+  .settings-overlay{display:none!important}
 }
 </style>
 </head>
 <body>
 <header>
   <div style="display:flex;justify-content:space-between;align-items:flex-start">
-    <h1>Amanda's Med Tracker</h1>
-    <button class="bedside-toggle" id="bedside-btn" onclick="toggleBedside()" title="Toggle bedside/night mode" aria-label="Toggle bedside night mode" role="switch" aria-checked="false">&#9790;</button>
+    <h1 id="app-title">Med Tracker</h1>
+    <div style="display:flex;gap:4px">
+      <button class="settings-btn" onclick="openSettings()" title="Settings" aria-label="Open settings">&#9881;</button>
+      <button class="bedside-toggle" id="bedside-btn" onclick="toggleBedside()" title="Toggle bedside/night mode" aria-label="Toggle bedside night mode" role="switch" aria-checked="false">&#9790;</button>
+    </div>
   </div>
   <div class="header-meta">
-    <span>Surgery: March 9, 2026</span>
+    <span id="event-info"></span>
     <span id="day-counter"></span>
     <span class="clock" id="clock"></span>
   </div>
@@ -270,24 +347,9 @@ body.bedside *:focus-visible{outline-color:#ffeaa7}
       <span class="chevron open" id="warn-chevron">&#9654;</span>
       <span id="warn-toggle-text">Safety Warnings</span>
     </button>
-    <div class="warnings-content" id="warnings-content">
-      <div class="alert alert-danger">
-        <strong>No NSAIDs for 2 Weeks</strong>
-        No Ibuprofen, Advil, Aleve, Aspirin, or Celebrex
-      </div>
-      <div class="alert alert-warn">
-        <strong>Oxycodone + Valium Separation</strong>
-        Must wait at least 1 hour between these two medications
-      </div>
-    </div>
+    <div class="warnings-content" id="warnings-content"></div>
   </div>
-  <div class="tylenol-section">
-    <div class="tylenol-header">
-      <h3>Tylenol (rolling 24hrs)</h3>
-      <div><span class="tylenol-amount" id="tyl-amount">0</span><span style="font-size:14px;color:var(--muted)">mg / 4000mg</span></div>
-    </div>
-    <div class="tylenol-bar"><div class="tylenol-fill" id="tyl-fill"></div></div>
-  </div>
+  <div id="tracked-totals"></div>
   <div id="recovery-note" aria-live="polite"></div>
   <div class="next-up" id="next-up" aria-label="Next medication due"></div>
   <div class="med-cards" id="med-cards" role="list" aria-label="All medications"></div>
@@ -314,6 +376,10 @@ body.bedside *:focus-visible{outline-color:#ffeaa7}
 <div class="modal-overlay hidden" id="modal-overlay" role="dialog" aria-modal="true" aria-label="Medication action" onclick="if(event.target===this)closeModal()">
   <div class="modal" id="modal"></div>
 </div>
+<div class="settings-overlay" id="settings-overlay">
+  <div class="settings-panel" id="settings-panel"></div>
+</div>
+<div class="welcome-overlay" id="welcome-overlay" style="display:none"></div>
 <script>
 // Register service worker for offline + PWA install
 // Auto-update: checks for new version every 5 min + on tab focus, auto-reloads
@@ -339,8 +405,14 @@ if ('serviceWorker' in navigator) {
   });
 }
 
-const SURGERY_DATE = '2026-03-09';
-const MEDS = [
+// === Configuration Layer ===
+const CONFIG_KEY = 'medtracker-config-v1';
+const DOSES_KEY = 'medtracker-doses-v1';
+const CURRENT_SCHEMA = 1;
+const COLOR_PALETTE = ['#e74c3c','#e84393','#8e44ad','#2980b9','#27ae60','#e67e22','#00b894','#fd79a8','#636e72','#00cec9'];
+
+// Default Amanda config — used for migration and post-surgery template
+const AMANDA_MEDS = [
   { id:'oxycodone', name:'Oxycodone', brand:'', dose:'5mg', perTab:5, maxTabs:2, purpose:'Pain Relief',
     freq:'1-2 tabs every 4 hrs as needed', intervalMin:240, color:'var(--oxy)', bgBadge:'#fde8e8', scheduled:false,
     warns:['Stop day after surgery unless itching or nausea'], category:'opioid' },
@@ -360,22 +432,83 @@ const MEDS = [
     freq:'Twice daily, can reduce to once', intervalMin:600, color:'var(--stool)', bgBadge:'#e8f5e9', scheduled:true,
     warns:[], category:'stool-softener', maxDoses:2 }
 ];
-const STORAGE_KEY = 'amanda-meds-v1';
-const CURRENT_SCHEMA = 1;
+const AMANDA_WARNINGS = [
+  { type:'danger', title:'No NSAIDs for 2 Weeks', text:'No Ibuprofen, Advil, Aleve, Aspirin, or Celebrex' },
+  { type:'warn', title:'Oxycodone + Valium Separation', text:'Must wait at least 1 hour between these two medications' }
+];
+const AMANDA_RECOVERY_NOTES = [
+  { minDay:14, maxDay:Infinity, noteType:'rn-success', text:'Day {day} — NSAID restriction period may be ending. Check with your surgeon before taking Ibuprofen or Aspirin.' },
+  { minDay:7, maxDay:13, noteType:'rn-info', text:'Day {day} — Cephalexin course may be ending soon. Check with your doctor about stopping the antibiotic.' },
+  { minDay:3, maxDay:6, noteType:'rn-info', text:'Day {day} — Focus on keeping up with Cephalexin (antibiotic). If pain is manageable, consider Tylenol-only windows to taper opioid use.' }
+];
+
+function buildAmandaConfig() {
+  return {
+    schema:1, patientName:'Amanda', eventDate:'2026-03-09', eventLabel:'Surgery',
+    meds:AMANDA_MEDS, warnings:AMANDA_WARNINGS, recoveryNotes:AMANDA_RECOVERY_NOTES,
+    colorPalette:COLOR_PALETTE
+  };
+}
+
+function loadConfig() {
+  // 1. Already migrated? Use new config
+  try {
+    const cfg = localStorage.getItem(CONFIG_KEY);
+    if (cfg) { const parsed=JSON.parse(cfg); if(parsed&&parsed.schema) return parsed; }
+  } catch(e) {}
+  // 2. Amanda's old data exists? Migrate it
+  const oldState = localStorage.getItem('amanda-meds-v1');
+  if (oldState) {
+    try {
+      const config = buildAmandaConfig();
+      const doses = JSON.parse(oldState);
+      localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+      localStorage.setItem(DOSES_KEY, JSON.stringify(doses));
+      // ⚠️ KEEP 'amanda-meds-v1' — never delete it (safety backup)
+      return config;
+    } catch(e) { console.warn('Config migration failed:', e); }
+  }
+  // 3. No data at all → first-run (return null, handled by first-run flow)
+  return null;
+}
+
+function saveConfig(cfg) {
+  try { localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg)); } catch(e) { console.error('saveConfig failed:', e); }
+}
+
+// Load config (null = first-run, handled later)
+let CONFIG = loadConfig();
+// If null (first-run), use defaults so app doesn't crash — first-run flow in Phase 3 will handle properly
+if (!CONFIG) {
+  CONFIG = { schema:1, patientName:'', eventDate:null, eventLabel:'', meds:[], warnings:[], recoveryNotes:[], colorPalette:COLOR_PALETTE };
+}
+
+// Derive runtime arrays from config
+let MEDS = CONFIG.meds;
+let WARNINGS = CONFIG.warnings;
+let RECOVERY_NOTES = CONFIG.recoveryNotes.map(n => ({
+  ...n,
+  text: typeof n.text === 'function' ? n.text : day => n.text.replace('{day}', day)
+}));
+const SURGERY_DATE = CONFIG.eventDate; // backward compat for existing code
 // CSS variable string for inline styles — browser resolves at render time, no getComputedStyle needed
 const _cssSuccess = 'var(--success)';
 let state = loadState();
 
 function loadState() {
-  try {
-    const s = localStorage.getItem(STORAGE_KEY);
-    if (s) {
-      let parsed = JSON.parse(s);
-      parsed = migrateState(parsed);
-      if (validateState(parsed)) { save_raw(parsed); return parsed; }
-      console.warn('Invalid state in localStorage, resetting to seed data');
-    }
-  } catch(e) { console.warn('Failed to load state:', e); }
+  // Try new key first, then fall back to old Amanda key
+  const keys = [DOSES_KEY, 'amanda-meds-v1'];
+  for (const key of keys) {
+    try {
+      const s = localStorage.getItem(key);
+      if (s) {
+        let parsed = JSON.parse(s);
+        parsed = migrateState(parsed);
+        if (validateState(parsed)) { save_raw(parsed); return parsed; }
+        console.warn('Invalid state in', key, '— trying next');
+      }
+    } catch(e) { console.warn('Failed to load state from', key, e); }
+  }
   const seed = seedState();
   save_raw(seed);
   return seed;
@@ -389,28 +522,20 @@ function migrateState(s) {
 }
 function validateState(s) {
   if (!s || !Array.isArray(s.doses) || typeof s.nextId !== 'number') return false;
-  const validMedIds = new Set(MEDS.map(m => m.id));
+  // Lenient: allow dose entries for meds that may have been removed from config
   return s.doses.every(d =>
     typeof d.id === 'number' &&
-    validMedIds.has(d.medId) &&
+    typeof d.medId === 'string' && d.medId.length > 0 &&
     typeof d.time === 'string' && !isNaN(new Date(d.time).getTime()) &&
     typeof d.tabs === 'number' && d.tabs > 0 &&
     typeof d.mg === 'number' && d.mg >= 0
   );
 }
 function seedState() {
-  const d = SURGERY_DATE;
-  return { schema:CURRENT_SCHEMA, doses:[
-    {id:1,medId:'oxycodone',time:d+'T09:30:00',tabs:1,mg:5},
-    {id:2,medId:'oxycodone',time:d+'T12:00:00',tabs:1,mg:5},
-    {id:3,medId:'hydroxyzine',time:d+'T12:00:00',tabs:1,mg:25},
-    {id:4,medId:'cephalexin',time:d+'T12:00:00',tabs:1,mg:500},
-    {id:5,medId:'stool',time:d+'T12:00:00',tabs:1,mg:0},
-    {id:6,medId:'tylenol',time:d+'T12:00:00',tabs:2,mg:1000}
-  ], nextId:7 };
+  return { schema:CURRENT_SCHEMA, doses:[], nextId:1 };
 }
 function save() { save_raw(state); }
-function save_raw(s) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch(e) { console.error('save failed (storage full?):', e); } }
+function save_raw(s) { try { localStorage.setItem(DOSES_KEY, JSON.stringify(s)); } catch(e) { console.error('save failed (storage full?):', e); } }
 
 function getMed(id) { return MEDS.find(m=>m.id===id); }
 function now() { return new Date(); }
@@ -431,10 +556,11 @@ function minsToHM(m) {
 function dosesForMed(medId) { return state.doses.filter(d=>d.medId===medId).sort((a,b)=>new Date(b.time)-new Date(a.time)); }
 function lastDose(medId) { const ds=dosesForMed(medId); return ds.length?ds[0]:null; }
 function todayDoses(medId) { const t=todayStr(); return state.doses.filter(d=>d.medId===medId&&fmt(d.time,'date')===t); }
-function tylenol24h() {
+function rolling24hTotal(medId) {
   const cutoff=new Date(now()-24*3600000);
-  return state.doses.filter(d=>d.medId==='tylenol'&&new Date(d.time)>=cutoff).reduce((s,d)=>s+d.mg,0);
+  return state.doses.filter(d=>d.medId===medId&&new Date(d.time)>=cutoff).reduce((s,d)=>s+d.mg,0);
 }
+function findPairedMeds(medId) { return MEDS.filter(m=>m.pairedWith===medId); }
 
 // Retroactive time selector
 window._doseTimeOffset = 0; // 0=just now, >0=minutes ago, -1=custom time input
@@ -520,7 +646,7 @@ function getNextUpQueue() {
   MEDS.forEach(med => {
     const todayCount = todayDoses(med.id);
     if (med.maxDoses && todayCount.length >= med.maxDoses) return;
-    if (med.id === 'tylenol' && tylenol24h() >= 4000) return;
+    if (med.trackTotal && rolling24hTotal(med.id) >= med.maxDaily) return;
     const last = lastDose(med.id);
     let minutesUntil = 0;
     let isAvailable = true;
@@ -639,7 +765,8 @@ function renderNextUp() {
 function render() {
   try{renderClock();}catch(e){console.error('renderClock:',e);}
   try{renderDayCounter();}catch(e){console.error('renderDayCounter:',e);}
-  try{renderTylenolMeter();}catch(e){console.error('renderTylenolMeter:',e);}
+  try{renderTrackedTotals();}catch(e){console.error('renderTrackedTotals:',e);}
+  try{renderWarnings();}catch(e){console.error('renderWarnings:',e);}
   try{renderRecoveryNote();}catch(e){console.error('renderRecoveryNote:',e);}
   try{renderNextUp();}catch(e){console.error('renderNextUp:',e);}
   try{renderCards();}catch(e){console.error('renderCards:',e);}
@@ -650,23 +777,64 @@ function renderClock() {
   document.getElementById('clock').textContent = now().toLocaleTimeString([],{hour:'numeric',minute:'2-digit',second:'2-digit'});
 }
 function renderDayCounter() {
-  const diff = Math.floor((now()-new Date(SURGERY_DATE+'T00:00:00'))/86400000);
-  document.getElementById('day-counter').textContent = diff===0?'Surgery Day':`Day ${diff} Post-Op`;
+  const el=document.getElementById('day-counter');
+  if(!CONFIG.eventDate){el.textContent='';return;}
+  const diff = Math.floor((now()-new Date(CONFIG.eventDate+'T00:00:00'))/86400000);
+  el.textContent = diff===0?(CONFIG.eventLabel||'Event')+' Day':`Day ${diff} Post-Op`;
 }
-function renderTylenolMeter() {
-  const amt=tylenol24h();
-  const pct=Math.min(100,amt/4000*100);
-  const el=document.getElementById('tyl-fill');
-  const amtEl=document.getElementById('tyl-amount');
-  amtEl.textContent=amt;
-  el.style.width=pct+'%';
-  if(amt<=2000){el.style.background=_cssSuccess;amtEl.style.color='var(--success)';}
-  else if(amt<=3000){el.style.background='#f39c12';amtEl.style.color='#f39c12';}
-  else{el.style.background='var(--danger-border)';amtEl.style.color='var(--danger-border)';}
+function renderTrackedTotals() {
+  const container=document.getElementById('tracked-totals');
+  const trackedMeds=MEDS.filter(m=>m.trackTotal);
+  if(!trackedMeds.length){container.innerHTML='';return;}
+  container.innerHTML=trackedMeds.map(med=>{
+    const amt=rolling24hTotal(med.id);
+    const pct=Math.min(100,amt/med.maxDaily*100);
+    const id='tt-'+med.id;
+    return `<div class="tracked-total-section">
+      <div class="tracked-total-header">
+        <h3>${med.name} (rolling 24hrs)</h3>
+        <div><span class="tracked-total-amount" id="${id}-amount">${amt}</span><span style="font-size:14px;color:var(--muted)">mg / ${med.maxDaily}mg</span></div>
+      </div>
+      <div class="tracked-total-bar"><div class="tracked-total-fill" id="${id}-fill" style="width:${pct}%;background:${amt<=med.maxDaily*0.5?_cssSuccess:amt<=med.maxDaily*0.75?'#f39c12':'var(--danger-border)'}"></div></div>
+    </div>`;
+  }).join('');
+  // Update colors on amount spans
+  trackedMeds.forEach(med=>{
+    const amt=rolling24hTotal(med.id);
+    const amtEl=document.getElementById('tt-'+med.id+'-amount');
+    if(amtEl){
+      if(amt<=med.maxDaily*0.5) amtEl.style.color='var(--success)';
+      else if(amt<=med.maxDaily*0.75) amtEl.style.color='#f39c12';
+      else amtEl.style.color='var(--danger-border)';
+    }
+  });
+}
+function renderWarnings() {
+  const container=document.getElementById('warnings-content');
+  if(!container) return;
+  // Static warnings from WARNINGS array
+  let html=WARNINGS.map(w=>`<div class="alert alert-${w.type}"><strong>${w.title}</strong>${w.text}</div>`).join('');
+  // Auto-generate conflict warnings from med config
+  MEDS.filter(m=>m.conflictsWith).forEach(med=>{
+    const other=getMed(med.conflictsWith);
+    if(!other) return;
+    const existsAlready=WARNINGS.some(w=>w.title.includes(med.name)&&w.title.includes(other.name));
+    if(!existsAlready) {
+      html+=`<div class="alert alert-warn"><strong>${other.name} + ${med.name} Separation</strong>Must wait at least ${med.conflictMin} minutes between these two medications</div>`;
+    }
+  });
+  container.innerHTML=html;
+  // Hide warnings section if nothing to show
+  const section=document.getElementById('warnings-section');
+  if(section) section.style.display=(WARNINGS.length||MEDS.some(m=>m.conflictsWith))?'':'none';
 }
 
 function renderCards() {
   const container=document.getElementById('med-cards');
+  if(MEDS.length===0){
+    container.innerHTML='<div class="empty-state"><p>No medications added yet.<br>Tap the ⚙️ gear icon to add your first one.</p><button onclick="openSettings();startAddMed()">+ Add Medication</button></div>';
+    return;
+  }
   container.innerHTML=MEDS.map(med=>{
     const last=lastDose(med.id);
     const ago=last?minAgo(last.time):null;
@@ -677,12 +845,12 @@ function renderCards() {
     const todayTabs=todayCount.reduce((s,d)=>s+d.tabs,0);
     const todayMg=todayCount.reduce((s,d)=>s+d.mg,0);
     const atMax=med.maxDoses&&todayCount.length>=med.maxDoses;
-    const tylAt4k=med.id==='tylenol'&&tylenol24h()>=4000;
+    const atDailyLimit=med.trackTotal&&rolling24hTotal(med.id)>=med.maxDaily;
     let statusDot='green',statusText='Available now';
     if(!available){statusDot='gray';statusText=`Available in ${minsToHM(remaining)}`;}
     if(atMax){statusDot='red';statusText=`${todayCount.length}/${med.maxDoses} doses today (complete)`;}
-    if(tylAt4k){statusDot='red';statusText='24hr limit reached (4000mg)';}
-    const disabled=tylAt4k||atMax;
+    if(atDailyLimit){statusDot='red';statusText=`24hr limit reached (${med.maxDaily}mg)`;}
+    const disabled=atDailyLimit||atMax;
     const warnsHtml=med.warns.map(w=>`<div class="card-warn">${w}</div>`).join('');
     return `<div class="card" role="listitem" aria-label="${med.name} medication card">
       <div class="card-accent" style="background:${med.color}"></div>
@@ -716,21 +884,27 @@ function renderLog() {
   const todayTotal=state.doses.filter(d=>fmt(d.time,'date')===t).reduce((s,d)=>s+d.tabs,0);
   countEl.textContent = todayTotal > 0 ? `(${todayTotal} today)` : '';
   if(!sorted.length){previewEl.innerHTML='<div class="log-empty">No doses logged yet</div>';fullEl.innerHTML='';return;}
-  let tylRunning=0;
-  const tylSorted=[...state.doses].filter(d=>d.medId==='tylenol').sort((a,b)=>new Date(a.time)-new Date(b.time));
-  const tylTotals={};
-  tylSorted.forEach(d=>{tylRunning+=d.mg;tylTotals[d.id]=tylRunning;});
+  // Build running totals for all meds that have trackTotal
+  const trackedTotals={};
+  const trackedMedIds=new Set(MEDS.filter(m=>m.trackTotal).map(m=>m.id));
+  const trackedRunning={};
+  [...state.doses].sort((a,b)=>new Date(a.time)-new Date(b.time)).forEach(d=>{
+    if(trackedMedIds.has(d.medId)){
+      trackedRunning[d.medId]=(trackedRunning[d.medId]||0)+d.mg;
+      trackedTotals[d.id]=trackedRunning[d.medId];
+    }
+  });
   const renderEntry = d => {
     const med=getMed(d.medId);
     const tabLabel=d.tabs>1?`${d.tabs} tabs`:'1 tab';
     const mgLabel=d.mg?` (${d.mg}mg)`:'';
-    const tylNote=d.medId==='tylenol'?`<div class="log-tylenol-note">Running total: ${tylTotals[d.id]||0}mg</div>`:'';
+    const trackedNote=(med&&med.trackTotal)?`<div class="log-tracked-note" style="color:${med.color}">Running total: ${trackedTotals[d.id]||0}mg</div>`:'';
     return `<div class="log-entry">
       <div class="log-time">${fmt(d.time,'time')}</div>
       <div class="log-dot" style="background:${med?med.color:'#999'}"></div>
       <div class="log-detail">
         <div><strong>${med?med.name:d.medId}</strong> &mdash; ${tabLabel}${mgLabel}</div>
-        ${tylNote}
+        ${trackedNote}
       </div>
       <button class="log-remove" onclick="handleRemove(${d.id})" title="Remove this entry" aria-label="Remove ${med?med.name:d.medId} dose at ${fmt(d.time,'time')}">&times;</button>
     </div>`;
@@ -864,7 +1038,7 @@ function downloadReminder(medId) {
   const pad = n => String(n).padStart(2, '0');
   const icsDate = d => d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + 'T' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
   const ics = [
-    'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//AmandaMeds//EN',
+    'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//MedTracker//EN',
     'BEGIN:VEVENT',
     'DTSTART:' + icsDate(nextTime),
     'DTEND:' + icsDate(end),
@@ -928,9 +1102,10 @@ function handleLog(medId) {
   try {
     const med=getMed(medId);
     if(!med){console.error('handleLog: unknown med',medId);return;}
-    if(medId==='oxycodone') return showOxyModal(med);
-    if(medId==='tylenol') return showTylModal(med);
-    if(medId==='diazepam') return showDiaModal(med);
+    // Config-driven modal routing
+    if(med.maxTabs>1||findPairedMeds(medId).length>0) return showMultiTabModal(med);
+    if(med.trackTotal) return showTrackedModal(med);
+    if(med.conflictsWith) return showConflictModal(med);
     // Simple confirm for others
     const last=lastDose(medId);
     const ago=last?minAgo(last.time):null;
@@ -948,89 +1123,117 @@ function handleLog(medId) {
   } catch(e) { console.error('handleLog error:',e); }
 }
 
-function showOxyModal(med) {
-  const last=lastDose('oxycodone');
+function showMultiTabModal(med) {
+  const last=lastDose(med.id);
   const ago=last?minAgo(last.time):null;
   let earlyWarn='';
   if(ago!==null&&ago<med.intervalMin){
-    earlyWarn=`<div class="warn-box">Last Oxycodone was ${minsToHM(ago)} ago. Recommended interval: 4 hours. Available in ${minsToHM(med.intervalMin-ago)}.</div>`;
+    const intervalLabel=med.intervalMin>=60?Math.round(med.intervalMin/60)+' hours':med.intervalMin+' minutes';
+    earlyWarn=`<div class="warn-box">Last ${med.name} was ${minsToHM(ago)} ago. Recommended interval: ${intervalLabel}. Available in ${minsToHM(med.intervalMin-ago)}.</div>`;
   }
-  showModal(`<h3>Log Oxycodone</h3>${earlyWarn}
-    <p style="font-weight:600;margin-bottom:6px">How many tablets?</p>
-    <div class="modal-tabs" id="oxy-tabs">
-      <button type="button" class="modal-tab active" onclick="selectTab(this,'oxy-tabs',1)">1 tab<span class="sub">5mg</span></button>
-      <button type="button" class="modal-tab" onclick="selectTab(this,'oxy-tabs',2)">2 tabs<span class="sub">10mg</span></button>
-    </div>
-    <label class="modal-check"><input type="checkbox" id="oxy-hyd-check" checked> Also give Hydroxyzine (Vistaril) 25mg for nausea</label>
+  // Build tab buttons dynamically from med.maxTabs
+  let tabsHtml='';
+  if(med.maxTabs>1){
+    tabsHtml=`<p style="font-weight:600;margin-bottom:6px">How many tablets?</p><div class="modal-tabs" id="modal-tab-group">`;
+    for(let i=1;i<=med.maxTabs;i++){
+      const active=i===1?'active':'';
+      const mg=i*med.perTab;
+      tabsHtml+=`<button type="button" class="modal-tab ${active}" onclick="selectTab(this,'modal-tab-group',${i})">${i} tab${i>1?'s':''}<span class="sub">${mg}mg</span></button>`;
+    }
+    tabsHtml+='</div>';
+  }
+  // Build paired med checkboxes dynamically
+  const paired=findPairedMeds(med.id);
+  let pairedHtml='';
+  paired.forEach(pm=>{
+    pairedHtml+=`<label class="modal-check"><input type="checkbox" data-paired-med="${pm.id}" checked> Also give ${pm.name}${pm.brand?' ('+pm.brand+')':''} ${pm.dose} for ${pm.purpose.toLowerCase()}</label>`;
+  });
+  window._modalMedId=med.id;
+  window._modalTabVal=1;
+  showModal(`<h3>Log ${med.name}</h3>${earlyWarn}
+    ${tabsHtml}${pairedHtml}
     ${renderTimeSelector()}
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
-      <button class="btn-confirm" onclick="confirmOxy()">Log Dose</button>
+      <button class="btn-confirm" onclick="confirmMultiTab()">Log Dose</button>
     </div>`);
-  window._oxyTabs=1;
 }
-function confirmOxy() {
+function confirmMultiTab() {
   try {
-    addDose('oxycodone', window._oxyTabs||1);
-    const hydCheck=document.getElementById('oxy-hyd-check');
-    if(hydCheck&&hydCheck.checked) addDose('hydroxyzine',1);
+    addDose(window._modalMedId, window._modalTabVal||1);
+    document.querySelectorAll('[data-paired-med]').forEach(cb=>{
+      if(cb.checked) addDose(cb.dataset.pairedMed,1);
+    });
     closeModal();
-  } catch(e) { console.error('confirmOxy error:',e); closeModal(); }
+  } catch(e) { console.error('confirmMultiTab error:',e); closeModal(); }
 }
 
-function showTylModal(med) {
-  const current=tylenol24h();
-  const after1=current+500, after2=current+1000;
-  let warn1='',warn2='';
-  if(after1>3000) warn1='<span style="color:var(--warn-border)"> (caution)</span>';
-  if(after1>4000) warn1='<span style="color:var(--danger-border)"> (exceeds limit!)</span>';
-  if(after2>3000) warn2='<span style="color:var(--warn-border)"> (caution)</span>';
-  if(after2>4000) warn2='<span style="color:var(--danger-border)"> (exceeds limit!)</span>';
-  const last=lastDose('tylenol');
+function showTrackedModal(med) {
+  const current=rolling24hTotal(med.id);
+  const cautionThreshold=med.maxDaily*0.75;
+  const last=lastDose(med.id);
   const ago=last?minAgo(last.time):null;
+  const intervalLabel=med.intervalMin>=60?Math.round(med.intervalMin/60)+' hours':med.intervalMin+' minutes';
   let earlyWarn='';
   if(ago!==null&&ago<med.intervalMin){
-    earlyWarn=`<div class="warn-box">Last Tylenol was ${minsToHM(ago)} ago. Recommended interval: 4 hours.</div>`;
+    earlyWarn=`<div class="warn-box">Last ${med.name} was ${minsToHM(ago)} ago. Recommended interval: ${intervalLabel}.</div>`;
   }
-  showModal(`<h3>Log Tylenol (Acetaminophen)</h3>${earlyWarn}
-    <p style="font-weight:600;margin-bottom:6px">How many tablets?</p>
-    <div class="modal-tabs" id="tyl-tabs">
-      <button type="button" class="modal-tab" onclick="selectTab(this,'tyl-tabs',1)">1 tab<span class="sub">500mg &rarr; ${after1}mg total${warn1}</span></button>
-      <button type="button" class="modal-tab active" onclick="selectTab(this,'tyl-tabs',2)">2 tabs<span class="sub">1000mg &rarr; ${after2}mg total${warn2}</span></button>
-    </div>
-    ${after2>4000?'<div class="warn-box">Taking 2 tablets would exceed the 4000mg daily maximum!</div>':''}
-    <p style="font-size:13px;color:var(--muted)">24hr total so far: ${current}mg / 4000mg</p>
+  // Build tab buttons with projected totals
+  let tabsHtml='<p style="font-weight:600;margin-bottom:6px">How many tablets?</p><div class="modal-tabs" id="modal-tab-group">';
+  const defaultTabs=Math.min(med.maxTabs,2); // default to 2 tabs if possible, like original behavior
+  for(let i=1;i<=med.maxTabs;i++){
+    const mg=i*med.perTab;
+    const projected=current+mg;
+    let warnSpan='';
+    if(projected>med.maxDaily) warnSpan='<span style="color:var(--danger-border)"> (exceeds limit!)</span>';
+    else if(projected>cautionThreshold) warnSpan='<span style="color:var(--warn-border)"> (caution)</span>';
+    const active=i===defaultTabs?'active':'';
+    tabsHtml+=`<button type="button" class="modal-tab ${active}" onclick="selectTab(this,'modal-tab-group',${i})">${i} tab${i>1?'s':''}<span class="sub">${mg}mg &rarr; ${projected}mg total${warnSpan}</span></button>`;
+  }
+  tabsHtml+='</div>';
+  const maxTabMg=current+med.maxTabs*med.perTab;
+  const exceedWarn=maxTabMg>med.maxDaily?`<div class="warn-box">Taking ${med.maxTabs} tablets would exceed the ${med.maxDaily}mg daily maximum!</div>`:'';
+  window._modalMedId=med.id;
+  window._modalTabVal=defaultTabs;
+  showModal(`<h3>Log ${med.name}${med.brand?' ('+med.brand+')':''}</h3>${earlyWarn}
+    ${tabsHtml}
+    ${exceedWarn}
+    <p style="font-size:13px;color:var(--muted)">24hr total so far: ${current}mg / ${med.maxDaily}mg</p>
     ${renderTimeSelector()}
     <div class="modal-actions" style="margin-top:12px">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
-      <button class="btn-confirm" onclick="confirmTyl()">Log Dose</button>
+      <button class="btn-confirm" onclick="confirmTracked()">Log Dose</button>
     </div>`);
-  window._tylTabs=2;
 }
-function confirmTyl() {
-  try { addDose('tylenol', window._tylTabs||2); closeModal(); }
-  catch(e) { console.error('confirmTyl error:',e); closeModal(); }
+function confirmTracked() {
+  try { addDose(window._modalMedId, window._modalTabVal||1); closeModal(); }
+  catch(e) { console.error('confirmTracked error:',e); closeModal(); }
 }
 
-function showDiaModal(med) {
-  const lastOxy=lastDose('oxycodone');
-  const oxyAgo=lastOxy?minAgo(lastOxy.time):null;
-  const lastDia=lastDose('diazepam');
-  const diaAgo=lastDia?minAgo(lastDia.time):null;
+function showConflictModal(med) {
+  const conflictMed=getMed(med.conflictsWith);
+  const conflictName=conflictMed?conflictMed.name:med.conflictsWith;
+  const lastConflict=lastDose(med.conflictsWith);
+  const conflictAgo=lastConflict?minAgo(lastConflict.time):null;
+  const lastSelf=lastDose(med.id);
+  const selfAgo=lastSelf?minAgo(lastSelf.time):null;
+  const intervalLabel=med.intervalMin>=60?Math.round(med.intervalMin/60)+' hours':med.intervalMin+' minutes';
+  const conflictMinLabel=med.conflictMin>=60?Math.round(med.conflictMin/60)+' hour'+(med.conflictMin>=120?'s':''):med.conflictMin+' minutes';
   let conflictWarn='';
-  if(oxyAgo!==null&&oxyAgo<60){
-    const wait=Math.ceil(60-oxyAgo);
-    conflictWarn=`<div class="warn-box"><strong>WARNING:</strong> Oxycodone was taken ${minsToHM(oxyAgo)} ago. You should wait at least 1 hour between Oxycodone and Diazepam. Recommend waiting ${wait} more minutes.</div>`;
+  if(conflictAgo!==null&&conflictAgo<med.conflictMin){
+    const wait=Math.ceil(med.conflictMin-conflictAgo);
+    conflictWarn=`<div class="warn-box"><strong>WARNING:</strong> ${conflictName} was taken ${minsToHM(conflictAgo)} ago. You should wait at least ${conflictMinLabel} between ${conflictName} and ${med.name}. Recommend waiting ${wait} more minutes.</div>`;
   }
   let earlyWarn='';
-  if(diaAgo!==null&&diaAgo<med.intervalMin){
-    earlyWarn=`<div class="warn-box">Last Diazepam was ${minsToHM(diaAgo)} ago. Recommended interval: 6 hours. Available in ${minsToHM(med.intervalMin-diaAgo)}.</div>`;
+  if(selfAgo!==null&&selfAgo<med.intervalMin){
+    earlyWarn=`<div class="warn-box">Last ${med.name} was ${minsToHM(selfAgo)} ago. Recommended interval: ${intervalLabel}. Available in ${minsToHM(med.intervalMin-selfAgo)}.</div>`;
   }
-  const confirmBtn=oxyAgo!==null&&oxyAgo<60
-    ?`<button class="btn-danger" onclick="addDose('diazepam',1);closeModal()">Log Anyway</button>`
-    :`<button class="btn-confirm" onclick="addDose('diazepam',1);closeModal()">Log Dose</button>`;
-  showModal(`<h3>Log Diazepam (Valium) 5mg</h3>${conflictWarn}${earlyWarn}
-    <p>Muscle relaxer &mdash; 1 tablet</p>
+  const inConflict=conflictAgo!==null&&conflictAgo<med.conflictMin;
+  const confirmBtn=inConflict
+    ?`<button class="btn-danger" onclick="addDose('${med.id}',1);closeModal()">Log Anyway</button>`
+    :`<button class="btn-confirm" onclick="addDose('${med.id}',1);closeModal()">Log Dose</button>`;
+  showModal(`<h3>Log ${med.name}${med.brand?' ('+med.brand+')':''} ${med.dose}</h3>${conflictWarn}${earlyWarn}
+    <p>${med.purpose} &mdash; 1 tablet</p>
     ${renderTimeSelector()}
     <div class="modal-actions" style="margin-top:14px">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
@@ -1041,8 +1244,7 @@ function showDiaModal(med) {
 function selectTab(el, groupId, val) {
   document.querySelectorAll('#'+groupId+' .modal-tab').forEach(t=>t.classList.remove('active'));
   el.classList.add('active');
-  if(groupId==='oxy-tabs') window._oxyTabs=val;
-  if(groupId==='tyl-tabs') window._tylTabs=val;
+  window._modalTabVal=val;
 }
 
 function handleRemove(id) {
@@ -1062,11 +1264,14 @@ function handleExport() {
     const med=getMed(d.medId);
     return `${fmt(d.time)}\t${med?med.name:d.medId}\t${d.tabs} tab(s)\t${d.mg}mg`;
   });
-  const text='Amanda Medication Log\nSurgery: '+SURGERY_DATE+'\nExported: '+now().toLocaleString()+'\n\n'+lines.join('\n');
+  let header=(CONFIG.patientName?CONFIG.patientName+' ':'')+'Medication Log';
+  if(CONFIG.eventDate) header+='\n'+CONFIG.eventLabel+': '+CONFIG.eventDate;
+  header+='\nExported: '+now().toLocaleString();
+  const text=header+'\n\n'+lines.join('\n');
   const blob=new Blob([text],{type:'text/plain'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
-  a.download='amanda-med-log-'+todayStr()+'.txt';
+  a.download='med-log-'+todayStr()+'.txt';
   a.click();
 }
 function handleClear() {
@@ -1074,14 +1279,15 @@ function handleClear() {
     <p>This will remove all logged doses. This cannot be undone.</p>
     <div class="modal-actions" style="flex-direction:column;gap:8px">
       <button class="btn-confirm" onclick="handleExport();closeModal()">Export Log First</button>
-      <button class="btn-danger" onclick="localStorage.removeItem('${STORAGE_KEY}');state=seedState();save();render();closeModal()">Clear Everything</button>
+      <button class="btn-danger" onclick="localStorage.removeItem(DOSES_KEY);state=seedState();save();render();closeModal()">Clear Everything</button>
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
     </div>`);
 }
 
 // === Phase 4: Progressive Disclosure ===
 function getRecoveryDay() {
-  return Math.floor((now() - new Date(SURGERY_DATE + 'T00:00:00')) / 86400000);
+  if(!CONFIG.eventDate) return -1;
+  return Math.floor((now() - new Date(CONFIG.eventDate + 'T00:00:00')) / 86400000);
 }
 
 let warningsCollapsed = false;
@@ -1127,7 +1333,7 @@ function toggleNqiItem(medId) {
 // Auto-collapse warnings after day 2
 function initWarningsState() {
   const day = getRecoveryDay();
-  if (day >= 2) {
+  if (day >= 2 || day < 0) {
     warningsCollapsed = true;
     const content = document.getElementById('warnings-content');
     const chevron = document.getElementById('warn-chevron');
@@ -1138,17 +1344,17 @@ function initWarningsState() {
   }
 }
 
-// Recovery phase notes
+// Recovery phase notes — driven by RECOVERY_NOTES array
 function renderRecoveryNote() {
   const el = document.getElementById('recovery-note');
   const day = getRecoveryDay();
+  if(day<0){el.innerHTML='';return;} // no event date configured
   let html = '';
-  if (day >= 14) {
-    html = '<div class="recovery-note rn-success">Day ' + day + ' — NSAID restriction period may be ending. Check with your surgeon before taking Ibuprofen or Aspirin.</div>';
-  } else if (day >= 7) {
-    html = '<div class="recovery-note rn-info">Day ' + day + ' — Cephalexin course may be ending soon. Check with your doctor about stopping the antibiotic.</div>';
-  } else if (day >= 3) {
-    html = '<div class="recovery-note rn-info">Day ' + day + ' — Focus on keeping up with Cephalexin (antibiotic). If pain is manageable, consider Tylenol-only windows to taper opioid use.</div>';
+  for(const note of RECOVERY_NOTES){
+    if(day>=note.minDay&&day<=note.maxDay){
+      html='<div class="recovery-note '+note.noteType+'">'+note.text(day)+'</div>';
+      break;
+    }
   }
   el.innerHTML = html;
 }
@@ -1159,10 +1365,10 @@ function toggleBedside() {
   const btn = document.getElementById('bedside-btn');
   btn.classList.toggle('active', active);
   btn.setAttribute('aria-checked', active);
-  localStorage.setItem('amanda-meds-bedside', active ? '1' : '0');
+  localStorage.setItem('medtracker-bedside', active ? '1' : '0');
 }
 function initBedside() {
-  const saved = localStorage.getItem('amanda-meds-bedside');
+  const saved = localStorage.getItem('medtracker-bedside') || localStorage.getItem('amanda-meds-bedside');
   const hour = new Date().getHours();
   const btn = document.getElementById('bedside-btn');
   if (saved === '1' || (saved === null && (hour >= 22 || hour < 6))) {
@@ -1171,8 +1377,452 @@ function initBedside() {
     btn.setAttribute('aria-checked', 'true');
   }
 }
+// === Settings UI ===
+let _editingMedIndex = -1; // -1 = not editing, -2 = adding new
+function openSettings() {
+  document.getElementById('settings-overlay').classList.add('open');
+  renderSettingsPanel();
+}
+function closeSettings() {
+  document.getElementById('settings-overlay').classList.remove('open');
+  _editingMedIndex = -1;
+}
+function renderSettingsPanel() {
+  const panel = document.getElementById('settings-panel');
+  let html = `<div class="settings-header"><h2>Settings</h2><button class="settings-close" onclick="closeSettings()">&times;</button></div>`;
+  // Profile section
+  html += `<div class="settings-section"><h3>Profile</h3>
+    <div class="settings-field"><label>Your Name</label><input type="text" id="cfg-name" value="${CONFIG.patientName||''}" placeholder="Leave blank for generic" onchange="updateConfigField('patientName',this.value)"><div class="hint">Shown in header and exports</div></div>
+    <div class="med-form-row">
+      <div class="settings-field"><label>Event Date</label><input type="date" id="cfg-event-date" value="${CONFIG.eventDate||''}" onchange="updateConfigField('eventDate',this.value||null)"></div>
+      <div class="settings-field"><label>Event Label</label><input type="text" id="cfg-event-label" value="${CONFIG.eventLabel||''}" placeholder="e.g. Surgery" onchange="updateConfigField('eventLabel',this.value)"></div>
+    </div>
+  </div>`;
+  // Medications section
+  html += `<div class="settings-section"><h3>Medications (${MEDS.length})</h3>`;
+  if (_editingMedIndex >= -1) {
+    MEDS.forEach((med, i) => {
+      html += `<div class="med-list-item" onclick="editMed(${i})">
+        <div class="med-list-swatch" style="background:${med.color}"></div>
+        <div class="med-list-info"><div class="med-list-name">${med.name}${med.brand?' ('+med.brand+')':''}</div><div class="med-list-dose">${med.dose} — ${med.freq}</div></div>
+        <div class="med-list-actions"><button onclick="event.stopPropagation();editMed(${i})" title="Edit">✏️</button><button onclick="event.stopPropagation();deleteMed(${i})" title="Delete">🗑️</button></div>
+      </div>`;
+    });
+  }
+  if (_editingMedIndex === -2) {
+    html += renderMedForm(null);
+  } else {
+    html += `<button class="btn-add-med" onclick="startAddMed()">+ Add Medication</button>`;
+  }
+  if (_editingMedIndex >= 0 && _editingMedIndex < MEDS.length) {
+    html += renderMedForm(MEDS[_editingMedIndex]);
+  }
+  html += '</div>';
+  // Warnings section
+  html += `<div class="settings-section"><h3>Warnings</h3>`;
+  CONFIG.warnings.forEach((w,i)=>{
+    html+=`<div class="med-list-item"><div style="flex:1"><strong>${w.title}</strong><div style="font-size:13px;color:var(--muted)">${w.text}</div></div>
+      <button style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;padding:6px" onclick="deleteWarning(${i})" title="Remove">🗑️</button></div>`;
+  });
+  html+=`<button class="btn-add-med" onclick="addWarning()">+ Add Warning</button></div>`;
+  // Config Export/Import section
+  html += `<div class="settings-section"><h3>Share Setup</h3>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:10px">Export your medication setup to share with a caregiver, or import a setup from someone else.</p>
+    <div class="config-share">
+      <button class="btn-export" onclick="exportConfig()">📋 Copy Setup</button>
+      <button class="btn-import" onclick="showImportField()">📥 Import Setup</button>
+    </div>
+    <div id="import-area"></div>
+  </div>`;
+  panel.innerHTML = html;
+}
+function renderMedForm(med) {
+  const isNew = !med;
+  const m = med || { id:'', name:'', brand:'', dose:'', perTab:0, maxTabs:1, purpose:'', freq:'', intervalMin:240, color:nextColor(), bgBadge:'#f0f0f0', scheduled:false, warns:[], category:'' };
+  const colorOptions = ['#e74c3c','#e84393','#8e44ad','#2980b9','#27ae60','#e67e22','#00b894','#fd79a8','#636e72','#00cec9'];
+  return `<div class="med-form"><h3>${isNew?'Add':'Edit'} Medication</h3>
+    <div class="settings-field"><label>Name *</label><input type="text" id="mf-name" value="${m.name}" placeholder="e.g. Ibuprofen"></div>
+    <div class="med-form-row">
+      <div class="settings-field"><label>Brand</label><input type="text" id="mf-brand" value="${m.brand||''}" placeholder="e.g. Advil"></div>
+      <div class="settings-field"><label>Dose Description</label><input type="text" id="mf-dose" value="${m.dose}" placeholder="e.g. 200mg tabs"></div>
+    </div>
+    <div class="med-form-row">
+      <div class="settings-field"><label>Mg per Tablet</label><input type="number" id="mf-perTab" value="${m.perTab}" min="0"></div>
+      <div class="settings-field"><label>Max Tablets/Dose</label><input type="number" id="mf-maxTabs" value="${m.maxTabs}" min="1"></div>
+    </div>
+    <div class="med-form-row">
+      <div class="settings-field"><label>Interval</label>
+        <select id="mf-interval"><option value="120"${m.intervalMin===120?' selected':''}>Every 2 hours</option><option value="240"${m.intervalMin===240?' selected':''}>Every 4 hours</option><option value="360"${m.intervalMin===360?' selected':''}>Every 6 hours</option><option value="480"${m.intervalMin===480?' selected':''}>Every 8 hours</option><option value="720"${m.intervalMin===720?' selected':''}>Every 12 hours</option><option value="1440"${m.intervalMin===1440?' selected':''}>Once daily</option><option value="custom"${![120,240,360,480,720,1440].includes(m.intervalMin)?' selected':''}>Custom</option></select>
+      </div>
+      <div class="settings-field"><label>Purpose</label><input type="text" id="mf-purpose" value="${m.purpose}" placeholder="e.g. Pain Relief"></div>
+    </div>
+    <div class="settings-field"><label>Frequency Description</label><input type="text" id="mf-freq" value="${m.freq}" placeholder="e.g. 1-2 tabs every 4 hours"></div>
+    <div class="settings-field"><label>Color</label><div class="color-swatches">${colorOptions.map(c=>`<div class="color-swatch${resolveColor(m.color)===c?' active':''}" style="background:${c}" onclick="selectMedColor(this,'${c}')"></div>`).join('')}</div></div>
+    <button class="advanced-toggle" onclick="toggleAdvanced()"><span class="chevron" id="adv-chevron">&#9654;</span> Advanced Options</button>
+    <div class="advanced-content" id="adv-content">
+      <div class="med-form-row">
+        <div class="settings-field"><label>Scheduled Med?</label><select id="mf-scheduled"><option value="0"${!m.scheduled?' selected':''}>As Needed</option><option value="1"${m.scheduled?' selected':''}>Scheduled</option></select></div>
+        <div class="settings-field"><label>Max Daily Doses</label><input type="number" id="mf-maxDoses" value="${m.maxDoses||0}" min="0" placeholder="0 = unlimited"></div>
+      </div>
+      <div class="med-form-row">
+        <div class="settings-field"><label>Track 24h Total?</label><select id="mf-trackTotal"><option value="0"${!m.trackTotal?' selected':''}>No</option><option value="1"${m.trackTotal?' selected':''}>Yes</option></select></div>
+        <div class="settings-field"><label>Daily Max (mg)</label><input type="number" id="mf-maxDaily" value="${m.maxDaily||0}" min="0" placeholder="e.g. 4000"></div>
+      </div>
+      <div class="med-form-row">
+        <div class="settings-field"><label>Paired With</label><select id="mf-pairedWith"><option value="">None</option>${MEDS.filter(x=>x.id!==m.id).map(x=>`<option value="${x.id}"${m.pairedWith===x.id?' selected':''}>${x.name}</option>`).join('')}</select></div>
+        <div class="settings-field"><label>Conflicts With</label><select id="mf-conflictsWith"><option value="">None</option>${MEDS.filter(x=>x.id!==m.id).map(x=>`<option value="${x.id}"${m.conflictsWith===x.id?' selected':''}>${x.name}</option>`).join('')}</select></div>
+      </div>
+      <div class="settings-field"><label>Conflict Wait (minutes)</label><input type="number" id="mf-conflictMin" value="${m.conflictMin||60}" min="0"></div>
+      <div class="settings-field"><label>Warnings (one per line)</label><textarea id="mf-warns" placeholder="e.g. Do not exceed 4000mg in 24 hours">${(m.warns||[]).join('\n')}</textarea></div>
+      <div class="settings-field"><label>Category</label><input type="text" id="mf-category" value="${m.category||''}" placeholder="e.g. analgesic"></div>
+    </div>
+    <div class="med-form-actions">
+      <button class="btn-cancel" onclick="cancelMedForm()">Cancel</button>
+      ${!isNew?'<button class="btn-danger" onclick="deleteMed('+_editingMedIndex+')">Delete</button>':''}
+      <button class="btn-confirm" onclick="saveMedForm(${isNew?-1:_editingMedIndex})">${isNew?'Add':'Save'}</button>
+    </div>
+  </div>`;
+}
+// Map CSS variable colors to hex for comparison (legacy Amanda meds use var(--oxy) etc.)
+const _cssVarMap={'var(--oxy)':'#e74c3c','var(--hyd)':'#e84393','var(--dia)':'#8e44ad','var(--ceph)':'#2980b9','var(--stool)':'#27ae60','var(--tyl)':'#e67e22'};
+function resolveColor(c) { return _cssVarMap[c] || c; }
+function nextColor() {
+  const used = new Set(MEDS.map(m=>resolveColor(m.color)));
+  return COLOR_PALETTE.find(c=>!used.has(c)) || COLOR_PALETTE[MEDS.length % COLOR_PALETTE.length];
+}
+let _selectedMedColor = null;
+function selectMedColor(el, color) {
+  document.querySelectorAll('.color-swatch').forEach(s=>s.classList.remove('active'));
+  el.classList.add('active');
+  _selectedMedColor = color;
+}
+function toggleAdvanced() {
+  const content = document.getElementById('adv-content');
+  const chevron = document.getElementById('adv-chevron');
+  content.classList.toggle('open');
+  if(chevron) chevron.style.transform = content.classList.contains('open') ? 'rotate(90deg)' : '';
+}
+function startAddMed() { _editingMedIndex = -2; _selectedMedColor = nextColor(); renderSettingsPanel(); }
+function editMed(i) { _editingMedIndex = i; _selectedMedColor = resolveColor(MEDS[i].color); renderSettingsPanel(); }
+function cancelMedForm() { _editingMedIndex = -1; renderSettingsPanel(); }
+function updateConfigField(field, value) {
+  CONFIG[field] = value;
+  saveConfig(CONFIG);
+  initAppHeader();
+  render();
+}
+function clearFieldErrors() {
+  document.querySelectorAll('.field-error').forEach(el=>el.classList.remove('field-error'));
+  document.querySelectorAll('.error-msg').forEach(el=>el.remove());
+}
+function showFieldError(fieldId, msg) {
+  const el = document.getElementById(fieldId);
+  if(el) {
+    el.classList.add('field-error');
+    const err = document.createElement('div');
+    err.className = 'error-msg';
+    err.textContent = msg;
+    el.parentElement.appendChild(err);
+  }
+}
+function saveMedForm(index) {
+  clearFieldErrors();
+  let hasErrors = false;
+  const name = document.getElementById('mf-name').value.trim();
+  if(!name){ showFieldError('mf-name','Name is required'); hasErrors=true; }
+  const perTab = parseFloat(document.getElementById('mf-perTab').value);
+  if(isNaN(perTab)||perTab<0){ showFieldError('mf-perTab','Must be 0 or more'); hasErrors=true; }
+  const maxTabs = parseInt(document.getElementById('mf-maxTabs').value);
+  if(isNaN(maxTabs)||maxTabs<1){ showFieldError('mf-maxTabs','Must be at least 1'); hasErrors=true; }
+  const intervalSelect = document.getElementById('mf-interval');
+  let intervalMin = parseInt(intervalSelect.value);
+  if(isNaN(intervalMin)||intervalMin<=0){ showFieldError('mf-interval','Select a valid interval'); hasErrors=true; intervalMin=240; }
+  // Validate track total
+  const trackTotal = document.getElementById('mf-trackTotal').value==='1';
+  if(trackTotal) {
+    const maxDaily = parseInt(document.getElementById('mf-maxDaily').value);
+    if(isNaN(maxDaily)||maxDaily<=0){ showFieldError('mf-maxDaily','Daily max required when tracking totals'); hasErrors=true; }
+  }
+  // Validate conflict minutes
+  const conflictsWith = document.getElementById('mf-conflictsWith').value;
+  if(conflictsWith) {
+    const conflictMin = parseInt(document.getElementById('mf-conflictMin').value);
+    if(isNaN(conflictMin)||conflictMin<=0){ showFieldError('mf-conflictMin','Conflict wait must be > 0'); hasErrors=true; }
+  }
+  if(hasErrors) return;
+
+  const color = _selectedMedColor || nextColor();
+  const med = {
+    id: index >= 0 ? MEDS[index].id : name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/-+$/,''),
+    name, brand: document.getElementById('mf-brand').value.trim(),
+    dose: document.getElementById('mf-dose').value.trim(),
+    perTab: perTab||0,
+    maxTabs: maxTabs||1,
+    purpose: document.getElementById('mf-purpose').value.trim(),
+    freq: document.getElementById('mf-freq').value.trim(),
+    intervalMin, color, bgBadge: color+'20',
+    scheduled: document.getElementById('mf-scheduled').value==='1',
+    warns: document.getElementById('mf-warns').value.split('\n').map(s=>s.trim()).filter(Boolean),
+    category: document.getElementById('mf-category').value.trim()
+  };
+  const maxDoses = parseInt(document.getElementById('mf-maxDoses').value);
+  if(maxDoses > 0) med.maxDoses = maxDoses;
+  if(trackTotal) {
+    med.trackTotal = true;
+    med.maxDaily = parseInt(document.getElementById('mf-maxDaily').value)||0;
+  }
+  const pairedWith = document.getElementById('mf-pairedWith').value;
+  if(pairedWith) med.pairedWith = pairedWith;
+  if(conflictsWith) {
+    med.conflictsWith = conflictsWith;
+    med.conflictMin = parseInt(document.getElementById('mf-conflictMin').value)||60;
+  }
+  // Ensure unique ID for new meds
+  if(index < 0) {
+    let baseId = med.id;
+    let suffix = 1;
+    while(MEDS.some(m=>m.id===med.id)) { med.id = baseId+'-'+suffix++; }
+    MEDS.push(med);
+  } else {
+    med.id = MEDS[index].id; // preserve original ID
+    MEDS[index] = med;
+  }
+  CONFIG.meds = MEDS;
+  saveConfig(CONFIG);
+  _editingMedIndex = -1;
+  showToast(index>=0 ? med.name+' updated' : med.name+' added');
+  renderSettingsPanel();
+  render();
+}
+function deleteMed(index) {
+  if(!confirm('Delete '+MEDS[index].name+'? Historical dose entries will be preserved.')) return;
+  MEDS.splice(index, 1);
+  CONFIG.meds = MEDS;
+  saveConfig(CONFIG);
+  _editingMedIndex = -1;
+  renderSettingsPanel();
+  render();
+}
+function addWarning() {
+  const title = prompt('Warning title:');
+  if(!title) return;
+  const text = prompt('Warning text:');
+  if(!text) return;
+  const type = confirm('Is this a danger warning? (Cancel for regular warning)') ? 'danger' : 'warn';
+  CONFIG.warnings.push({type, title, text});
+  WARNINGS = CONFIG.warnings;
+  saveConfig(CONFIG);
+  renderSettingsPanel();
+  render();
+}
+function deleteWarning(index) {
+  if(!confirm('Remove this warning?')) return;
+  CONFIG.warnings.splice(index, 1);
+  WARNINGS = CONFIG.warnings;
+  saveConfig(CONFIG);
+  renderSettingsPanel();
+  render();
+}
+
+// === Config Export/Import ===
+function showToast(msg) {
+  let toast = document.querySelector('.toast');
+  if(!toast) { toast = document.createElement('div'); toast.className='toast'; document.body.appendChild(toast); }
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(toast._tid);
+  toast._tid = setTimeout(()=>toast.classList.remove('show'), 2500);
+}
+function exportConfig() {
+  try {
+    // Export only med config, not dose data
+    const exportData = {
+      _mt:1, // marker to identify Med Tracker config
+      meds: CONFIG.meds,
+      warnings: CONFIG.warnings,
+      recoveryNotes: CONFIG.recoveryNotes,
+      eventLabel: CONFIG.eventLabel || '',
+      colorPalette: CONFIG.colorPalette || COLOR_PALETTE
+    };
+    const json = JSON.stringify(exportData);
+    const b64 = btoa(unescape(encodeURIComponent(json)));
+    if(navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(b64).then(()=>showToast('Setup copied to clipboard!')).catch(()=>fallbackCopy(b64));
+    } else {
+      fallbackCopy(b64);
+    }
+  } catch(e) { console.error('exportConfig error:', e); showToast('Export failed'); }
+}
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText='position:fixed;opacity:0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); showToast('Setup copied to clipboard!'); }
+  catch(e) { showToast('Copy failed — try manually'); }
+  document.body.removeChild(ta);
+}
+function showImportField() {
+  const area = document.getElementById('import-area');
+  area.innerHTML = `<div class="import-area">
+    <textarea id="import-input" placeholder="Paste the setup code here..." rows="3" oninput="previewImport()"></textarea>
+    <div id="import-preview-box"></div>
+  </div>`;
+  setTimeout(()=>{const el=document.getElementById('import-input');if(el)el.focus();},50);
+}
+function previewImport() {
+  const input = document.getElementById('import-input');
+  const box = document.getElementById('import-preview-box');
+  if(!input||!box) return;
+  const raw = input.value.trim();
+  if(!raw){box.innerHTML='';return;}
+  try {
+    const json = decodeURIComponent(escape(atob(raw)));
+    const data = JSON.parse(json);
+    if(!data._mt || !Array.isArray(data.meds)) throw new Error('Invalid format');
+    box.innerHTML = `<div class="import-preview">
+      <strong>Found ${data.meds.length} medication${data.meds.length!==1?'s':''}:</strong>
+      ${data.meds.map(m=>`<div style="display:flex;align-items:center;gap:6px;margin:4px 0"><span style="width:10px;height:10px;border-radius:50%;background:${m.color||'#999'}"></span>${m.name} (${m.dose})</div>`).join('')}
+      ${data.warnings.length?'<div style="margin-top:4px;color:var(--muted)">'+data.warnings.length+' warning(s)</div>':''}
+      <div class="import-actions">
+        <button class="btn-cancel" onclick="cancelImport()">Cancel</button>
+        <button class="btn-confirm" onclick="applyImport()">Apply This Setup</button>
+      </div>
+    </div>`;
+  } catch(e) {
+    box.innerHTML = '<div style="color:var(--danger-border);font-size:13px;margin-top:4px">Invalid setup code. Make sure you pasted the full text.</div>';
+  }
+}
+function cancelImport() {
+  const area = document.getElementById('import-area');
+  if(area) area.innerHTML = '';
+}
+function applyImport() {
+  const input = document.getElementById('import-input');
+  if(!input) return;
+  try {
+    const json = decodeURIComponent(escape(atob(input.value.trim())));
+    const data = JSON.parse(json);
+    if(!data._mt || !Array.isArray(data.meds)) throw new Error('Invalid');
+    CONFIG.meds = data.meds;
+    CONFIG.warnings = data.warnings || [];
+    CONFIG.recoveryNotes = data.recoveryNotes || [];
+    if(data.eventLabel) CONFIG.eventLabel = data.eventLabel;
+    MEDS = CONFIG.meds;
+    WARNINGS = CONFIG.warnings;
+    RECOVERY_NOTES = (CONFIG.recoveryNotes||[]).map(n=>({
+      ...n, text: typeof n.text === 'function' ? n.text : day => n.text.replace('{day}', day)
+    }));
+    saveConfig(CONFIG);
+    showToast('Setup imported — '+data.meds.length+' meds loaded!');
+    renderSettingsPanel();
+    initAppHeader();
+    render();
+  } catch(e) { showToast('Import failed — invalid code'); }
+}
+
+// === First-Run Experience ===
+const TEMPLATES = {
+  'post-surgery': {
+    label:'Post-Surgery Recovery',
+    description:'6 common post-surgery medications with safety warnings and tracking',
+    meds:AMANDA_MEDS.map(m=>({...m})), // deep copy
+    warnings:AMANDA_WARNINGS.map(w=>({...w})),
+    recoveryNotes:AMANDA_RECOVERY_NOTES.map(n=>({...n}))
+  },
+  'daily': { label:'Daily Medications', description:'Start with an empty list for your daily prescriptions', meds:[], warnings:[], recoveryNotes:[] },
+  'empty': { label:'Start from Scratch', description:'Completely blank — add your own meds in settings', meds:[], warnings:[], recoveryNotes:[] }
+};
+
+let _welcomeStep = 1;
+let _welcomeName = '';
+function showWelcome() {
+  const overlay = document.getElementById('welcome-overlay');
+  overlay.style.display = 'flex';
+  renderWelcomeStep();
+}
+function renderWelcomeStep() {
+  const overlay = document.getElementById('welcome-overlay');
+  if (_welcomeStep === 1) {
+    overlay.innerHTML = `<div class="welcome-card">
+      <h2>💊 Welcome to Med Tracker</h2>
+      <p>Keep track of medications, dosing intervals, and daily limits — all on your phone.</p>
+      <input type="text" id="welcome-name" value="${_welcomeName}" placeholder="Your name (optional)" onkeydown="if(event.key==='Enter')welcomeNext()">
+      <button class="welcome-btn" onclick="welcomeNext()">Get Started</button>
+    </div>`;
+    setTimeout(()=>{const el=document.getElementById('welcome-name');if(el)el.focus();},100);
+  } else if (_welcomeStep === 2) {
+    overlay.innerHTML = `<div class="welcome-card">
+      <h2>Choose a Starting Point</h2>
+      <p>You can always customize medications later in Settings.</p>
+      <div class="welcome-templates">
+        ${Object.entries(TEMPLATES).map(([key,tpl])=>`<div class="welcome-tpl" onclick="selectTemplate('${key}')"><strong>${tpl.label}</strong><span>${tpl.description}</span></div>`).join('')}
+      </div>
+    </div>`;
+  }
+}
+function welcomeNext() {
+  const nameInput = document.getElementById('welcome-name');
+  _welcomeName = nameInput ? nameInput.value.trim() : '';
+  _welcomeStep = 2;
+  renderWelcomeStep();
+}
+function selectTemplate(key) {
+  const tpl = TEMPLATES[key];
+  CONFIG.patientName = _welcomeName;
+  CONFIG.meds = tpl.meds.map(m=>({...m}));
+  CONFIG.warnings = tpl.warnings.map(w=>({...w}));
+  CONFIG.recoveryNotes = tpl.recoveryNotes.map(n=>({...n}));
+  if(key === 'post-surgery') {
+    CONFIG.eventDate = CONFIG.eventDate || null; // user can set later
+    CONFIG.eventLabel = 'Surgery';
+  }
+  MEDS = CONFIG.meds;
+  WARNINGS = CONFIG.warnings;
+  RECOVERY_NOTES = CONFIG.recoveryNotes.map(n=>({
+    ...n,
+    text: typeof n.text === 'function' ? n.text : day => n.text.replace('{day}', day)
+  }));
+  saveConfig(CONFIG);
+  // Close welcome
+  document.getElementById('welcome-overlay').style.display = 'none';
+  initAppHeader();
+  render();
+}
+
+// Check for first-run
+const _isFirstRun = !localStorage.getItem(CONFIG_KEY) && !localStorage.getItem('amanda-meds-v1');
+
+// Empty state for renderCards when no meds
+const _origRenderCards = typeof renderCards === 'function' ? renderCards : null;
+// We'll patch renderCards inline — check added in the function itself
+
+// Dynamic header based on config
+function initAppHeader() {
+  const title = (CONFIG.patientName ? CONFIG.patientName+"'s" : 'My') + ' Med Tracker';
+  document.title = title;
+  const h1 = document.getElementById('app-title');
+  if(h1) h1.textContent = title;
+  const appleTitle = document.getElementById('apple-title');
+  if(appleTitle) appleTitle.setAttribute('content', CONFIG.patientName ? CONFIG.patientName+"'s Meds" : 'Med Tracker');
+  const eventInfo = document.getElementById('event-info');
+  if(eventInfo) {
+    if(CONFIG.eventDate) {
+      const d=new Date(CONFIG.eventDate+'T00:00:00');
+      const formatted=d.toLocaleDateString([],{month:'long',day:'numeric',year:'numeric'});
+      eventInfo.textContent=(CONFIG.eventLabel||'Event')+': '+formatted;
+    } else {
+      eventInfo.textContent='';
+    }
+  }
+}
+initAppHeader();
 initBedside();
 initWarningsState();
+
+// First-run welcome flow
+if (_isFirstRun) { showWelcome(); }
 
 // Midnight rollover detection — full re-render when the day changes
 let _lastRenderDay = todayStr();
@@ -1190,7 +1840,7 @@ setInterval(()=>{
   } catch(e) {}
   try{renderClock();}catch(e){}
   try{renderDayCounter();}catch(e){}
-  try{renderTylenolMeter();}catch(e){}
+  try{renderTrackedTotals();}catch(e){}
   if(++_nqiTick % 10 === 0){try{renderNextUp();}catch(e){}}
   // Update status text on cards without full re-render
   try{

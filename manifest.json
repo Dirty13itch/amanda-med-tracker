@@ -1,7 +1,7 @@
 {
-  "name": "Amanda's Med Tracker",
+  "name": "Med Tracker",
   "short_name": "Meds",
-  "description": "Post-surgery medication tracker for Amanda",
+  "description": "Personal medication tracker",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#2d3436",
