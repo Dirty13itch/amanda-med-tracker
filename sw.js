@@ -1,4 +1,4 @@
-const CACHE_NAME = 'amanda-meds-v1';
+const CACHE_NAME = 'amanda-meds-v10';
 const ASSETS = [
   '/',
   '/index.html',
@@ -6,7 +6,7 @@ const ASSETS = [
   '/icon.svg'
 ];
 
-// Install: cache all app assets
+// Install: cache all app assets, take over immediately
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME)
@@ -15,7 +15,7 @@ self.addEventListener('install', event => {
   );
 });
 
-// Activate: clean up old caches
+// Activate: clean up ALL old caches, claim clients immediately
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys =>
@@ -24,19 +24,46 @@ self.addEventListener('activate', event => {
   );
 });
 
-// Fetch: cache-first, fall back to network
+// Fetch strategy:
+//   HTML (navigation requests) → network-first (fresh app on every load when online)
+//   Static assets → stale-while-revalidate (serve cached, update in background)
 self.addEventListener('fetch', event => {
+  const url = new URL(event.request.url);
+
+  // Only handle same-origin requests
+  if (url.origin !== self.location.origin) return;
+
+  // HTML / navigation: network-first
+  if (event.request.mode === 'navigate' || url.pathname === '/' || url.pathname === '/index.html') {
+    event.respondWith(
+      fetch(event.request)
+        .then(response => {
+          // Cache the fresh HTML for offline use
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request).then(cached => cached || caches.match('/')))
+    );
+    return;
+  }
+
+  // Static assets: stale-while-revalidate
   event.respondWith(
     caches.match(event.request).then(cached => {
-      if (cached) return cached;
-      return fetch(event.request).then(response => {
-        // Cache new successful requests
+      // Start a background fetch to update the cache
+      const fetchPromise = fetch(event.request).then(response => {
         if (response.ok) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
         }
         return response;
-      });
-    }).catch(() => caches.match('/'))
+      }).catch(() => cached || caches.match('/'));
+
+      // Return cached immediately if available, otherwise wait for network
+      return cached || fetchPromise;
+    })
   );
 });

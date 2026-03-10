@@ -61,8 +61,8 @@ main{max-width:800px;margin:0 auto;padding:12px}
 .card-badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;white-space:nowrap;flex-shrink:0}
 .card-dose{font-size:14px;color:var(--muted);margin-bottom:8px}
 .card-status{font-size:14px;margin-bottom:4px;display:flex;align-items:center;gap:6px}
-.card-status .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
-.card-status .dot.green{background:var(--success)}.card-status .dot.gray{background:var(--muted)}.card-status .dot.red{background:var(--danger-border)}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;display:inline-block}
+.dot.green{background:var(--success)}.dot.gray{background:var(--muted)}.dot.red{background:var(--danger-border)}
 .card-timer{font-size:13px;color:var(--muted);margin-bottom:6px;font-variant-numeric:tabular-nums}
 .timer-bar{height:4px;background:var(--border);border-radius:2px;margin-bottom:10px;overflow:hidden}
 .timer-fill{height:100%;border-radius:2px;transition:width 1s linear}
@@ -84,14 +84,15 @@ main{max-width:800px;margin:0 auto;padding:12px}
 .actions{display:flex;gap:8px;justify-content:center;padding:12px 0 32px}
 .actions button{padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--muted);font-size:13px;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .actions button:hover{border-color:var(--muted)}
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;align-items:center;justify-content:center;padding:16px}
-.modal-overlay.hidden{display:none}
-.modal{background:var(--card);border-radius:16px;padding:24px;max-width:380px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,.2)}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;align-items:flex-end;justify-content:center;padding:0;opacity:1;transition:opacity .25s ease}
+.modal-overlay.hidden{display:none;opacity:0}
+.modal{background:var(--card);border-radius:20px 20px 0 0;padding:24px;padding-bottom:calc(24px + env(safe-area-inset-bottom,0px));max-width:500px;width:100%;box-shadow:0 -4px 32px rgba(0,0,0,.25);transform:translateY(0);transition:transform .3s cubic-bezier(.4,0,.2,1)}
+.modal-handle{width:36px;height:4px;border-radius:2px;background:var(--border);margin:-8px auto 16px}
 .modal h3{font-size:18px;margin-bottom:12px}
 .modal p{font-size:14px;color:var(--muted);margin-bottom:12px;line-height:1.5}
 .modal .warn-box{background:var(--danger-bg);border:1px solid var(--danger-border);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:14px;color:var(--danger-border);line-height:1.4}
 .modal-tabs{display:flex;gap:8px;margin-bottom:14px}
-.modal-tab{flex:1;padding:10px;border:2px solid var(--border);border-radius:8px;background:var(--card);font-size:14px;font-weight:600;cursor:pointer;text-align:center;transition:border-color .2s;-webkit-tap-highlight-color:transparent}
+.modal-tab{flex:1;padding:10px;border:2px solid var(--border);border-radius:8px;background:var(--card);font-size:14px;font-weight:600;cursor:pointer;text-align:center;transition:border-color .2s;-webkit-tap-highlight-color:transparent;font-family:inherit;color:var(--text);line-height:1.4}
 .modal-tab.active{border-color:var(--text)}
 .modal-tab .sub{font-size:12px;font-weight:400;color:var(--muted);display:block}
 .modal-check{display:flex;align-items:center;gap:8px;margin-bottom:16px;font-size:14px;cursor:pointer}
@@ -101,9 +102,144 @@ main{max-width:800px;margin:0 auto;padding:12px}
 .modal-actions .btn-confirm{background:var(--text);color:var(--bg)}
 .modal-actions .btn-cancel{background:var(--border);color:var(--text)}
 .modal-actions .btn-danger{background:var(--danger-border);color:#fff}
+/* Retroactive time selector */
+.time-selector{margin-bottom:14px;pointer-events:none}
+.time-selector.ts-ready{pointer-events:auto}
+.ts-label{font-size:13px;font-weight:600;color:var(--muted);margin-bottom:8px}
+.ts-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.ts-chip{padding:8px 12px;border:2px solid var(--border);border-radius:8px;background:var(--card);font-size:13px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:border-color .2s,background .2s;white-space:nowrap;min-height:40px;display:flex;align-items:center;font-family:inherit;color:var(--text);line-height:1.4}
+.ts-chip.active{border-color:var(--text);background:var(--text);color:var(--bg)}
+.ts-custom{display:none;align-items:center;gap:8px;font-size:14px;padding:4px 0}
+.ts-custom.visible{display:flex}
+.ts-custom input[type="time"]{padding:8px 12px;border:2px solid var(--border);border-radius:8px;font-size:16px;background:var(--card);color:var(--text);font-family:inherit}
+.ts-custom-label{font-size:13px;color:var(--muted)}
+body.bedside .ts-chip{border-color:#2a2a2a;min-height:48px;font-size:15px}
+body.bedside .ts-label{font-size:15px}
+/* Next Up Section */
+.next-up{margin-bottom:16px}
+.next-up-label{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:10px;padding:0 2px}
+.next-up-card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;border:2px solid transparent;transition:border-color .3s,box-shadow .3s}
+.next-up-card.nuc-available{border-color:var(--success)}
+.next-up-card.nuc-overdue{border-color:var(--danger-border);animation:pulse-border 2s ease-in-out infinite}
+.nuc-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px}
+.nuc-name{font-size:22px;font-weight:700;line-height:1.2}
+.nuc-brand{font-size:13px;color:var(--muted);font-weight:400;margin-bottom:2px}
+.nuc-dose{font-size:15px;color:var(--muted);margin-bottom:12px}
+.nuc-status{font-size:16px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.nuc-timer-bar{height:6px;background:var(--border);border-radius:3px;margin-bottom:16px;overflow:hidden}
+.nuc-timer-fill{height:100%;border-radius:3px;transition:width 1s linear}
+.btn-log-next{width:100%;padding:16px;border:none;border-radius:10px;font-size:17px;font-weight:700;cursor:pointer;color:#fff;transition:opacity .2s,transform .1s;-webkit-tap-highlight-color:transparent}
+.btn-log-next:active{transform:scale(.97)}
+.btn-log-next:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.next-up-queue{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.nqi{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--card);border-radius:8px;font-size:14px;box-shadow:0 1px 3px rgba(0,0,0,.04);cursor:pointer;transition:background .15s;-webkit-tap-highlight-color:transparent}
+.nqi:active{background:var(--border)}
+.nqi-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.nqi-name{font-weight:600;flex:1}
+.nqi-time{color:var(--muted);font-variant-numeric:tabular-nums;font-size:13px}
+.nqi-chevron{font-size:10px;color:var(--muted);transition:transform .2s ease;margin-left:auto;flex-shrink:0}
+.nqi-chevron.open{transform:rotate(180deg)}
+.nqi-section-toggle{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:8px;margin-top:8px;background:none;border:none;color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.nqi-section-toggle .chevron{display:inline-block;transition:transform .25s ease;font-size:11px}
+.nqi-section-toggle .chevron.open{transform:rotate(180deg)}
+.nqi-queue-wrap{overflow:hidden;transition:max-height .3s ease,opacity .25s ease;max-height:600px;opacity:1}
+.nqi-queue-wrap.collapsed{max-height:0;opacity:0}
+.nqi-detail{overflow:hidden;max-height:0;opacity:0;transition:max-height .3s ease,opacity .2s ease,padding .3s ease;padding:0 14px;background:var(--card);border-radius:0 0 8px 8px;margin-top:-4px}
+.nqi-detail.open{max-height:200px;opacity:1;padding:12px 14px}
+.nqi-detail .nqi-detail-dose{font-size:13px;color:var(--muted);margin-bottom:8px}
+.nqi-detail .nqi-detail-status{font-size:14px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+.nqi-detail .nqi-btn-log{width:100%;padding:12px;border:none;border-radius:8px;font-size:15px;font-weight:700;color:#fff;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:opacity .2s,transform .1s}
+.nqi-detail .nqi-btn-log:active{transform:scale(.97)}
+.nqi-detail .nqi-btn-log:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.nqi-detail .nqi-btn-reminder{width:100%;padding:8px;margin-top:6px;background:none;border:1px solid var(--border);border-radius:8px;font-size:13px;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;-webkit-tap-highlight-color:transparent}
+.next-up-clear{text-align:center;padding:20px;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);font-size:15px;line-height:1.5}
+.next-up-clear .nuc-calm{color:var(--success);font-weight:700;font-size:17px;margin-bottom:4px}
+.next-up-clear .nuc-detail{color:var(--muted)}
+@keyframes pulse-border{0%,100%{box-shadow:0 0 0 0 rgba(231,76,60,.25)}50%{box-shadow:0 0 16px 4px rgba(231,76,60,.15)}}
+/* Bedside / Night Mode */
+body.bedside{--bg:#000;--card:#0d0d0d;--text:#e8c9a0;--muted:#7a6248;--border:#1a1a1a;--shadow:none;
+  --danger-bg:#1a0a0a;--danger-border:#a04030;--warn-bg:#1a1408;--warn-border:#a08030;--success:#b08840}
+body.bedside header{background:#000;box-shadow:none}
+body.bedside .header-meta span:not(.clock){display:none}
+body.bedside .header-meta .clock{color:#e8c9a0}
+body.bedside .warnings,body.bedside .tylenol-section,body.bedside .med-cards,body.bedside .log-section,body.bedside .actions{display:none}
+body.bedside .next-up-card{padding:28px}
+body.bedside .nuc-name{font-size:28px}
+body.bedside .nuc-dose{font-size:18px}
+body.bedside .nuc-status{font-size:20px}
+body.bedside .btn-log-next{padding:22px;font-size:20px;border-radius:14px}
+body.bedside .next-up-queue .nqi{padding:14px 16px;font-size:16px}
+body.bedside .nqi-name{font-size:16px}
+body.bedside .nqi-time{font-size:15px}
+body.bedside .next-up-clear{font-size:18px;padding:28px}
+body.bedside .next-up-clear .nuc-calm{font-size:22px}
+body.bedside .btn-reminder{font-size:16px;padding:12px 16px;min-height:56px}
+body.bedside .btn-log-next{min-height:64px}
+body.bedside .nqi{min-height:56px;font-size:18px}
+body.bedside .nuc-dose{font-size:20px}
+body.bedside .next-up-label{font-size:16px}
+body.bedside .nqi-section-toggle{font-size:16px;padding:12px}
+body.bedside .nqi-chevron{font-size:13px}
+body.bedside .nqi-detail.open{padding:16px;max-height:280px}
+body.bedside .nqi-detail .nqi-btn-log{padding:18px;font-size:18px;min-height:56px}
+body.bedside .nqi-detail .nqi-btn-reminder{font-size:15px;padding:12px}
+body.bedside .nqi-detail .nqi-detail-dose{font-size:15px}
+body.bedside .nqi-detail .nqi-detail-status{font-size:17px}
+.bedside-toggle{background:none;border:none;color:rgba(255,255,255,.6);font-size:20px;cursor:pointer;padding:4px 8px;-webkit-tap-highlight-color:transparent;line-height:1;border-radius:4px}
+.bedside-toggle:hover{color:#fff}
+.bedside-toggle.active{color:#ffeaa7}
+/* Alert Banner */
+.alert-banner{position:fixed;top:0;left:0;right:0;padding:14px 20px;z-index:250;display:flex;align-items:center;gap:12px;transform:translateY(-100%);transition:transform .35s cubic-bezier(.4,0,.2,1);box-shadow:0 4px 20px rgba(0,0,0,.3)}
+@supports(padding-top:env(safe-area-inset-top)){.alert-banner{padding-top:calc(14px + env(safe-area-inset-top))}}
+.alert-banner.ab-visible{transform:translateY(0)}
+.alert-banner.ab-ready{background:linear-gradient(135deg,#00b894,#00cec9)}
+.alert-banner.ab-overdue{background:linear-gradient(135deg,#e74c3c,#c0392b)}
+.ab-text{flex:1;color:#fff;font-size:16px;font-weight:600;line-height:1.3}
+.ab-actions{display:flex;gap:8px;align-items:center;flex-shrink:0}
+.ab-log{background:rgba(255,255,255,.25);border:none;color:#fff;font-size:14px;font-weight:700;padding:8px 16px;border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.ab-log:active{background:rgba(255,255,255,.4)}
+.ab-dismiss{background:none;border:none;color:rgba(255,255,255,.7);font-size:24px;cursor:pointer;padding:2px 8px;-webkit-tap-highlight-color:transparent;line-height:1}
+/* Reminder button on cards */
+.btn-reminder{display:inline-flex;align-items:center;gap:4px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--muted);font-size:12px;cursor:pointer;-webkit-tap-highlight-color:transparent;margin-bottom:8px}
+.btn-reminder:hover{border-color:var(--muted);color:var(--text)}
+.btn-reminder svg{width:14px;height:14px;flex-shrink:0}
+/* Phase 4: Progressive Disclosure */
+.warnings-toggle{display:flex;align-items:center;gap:6px;width:100%;padding:8px 14px;border:none;border-radius:var(--radius);background:var(--card);color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent;box-shadow:var(--shadow)}
+.warnings-toggle .chevron{transition:transform .25s ease;display:inline-block}
+.warnings-toggle .chevron.open{transform:rotate(90deg)}
+.warnings-content{overflow:hidden;transition:max-height .35s ease;max-height:500px}
+.warnings-content.collapsed{max-height:0}
+.log-section h2{display:flex;align-items:center;justify-content:space-between;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.log-section h2 .chevron{transition:transform .25s ease;display:inline-block;font-size:16px;color:var(--muted)}
+.log-section h2 .chevron.open{transform:rotate(90deg)}
+.log-count{font-size:14px;color:var(--muted);font-weight:400}
+.log-full{overflow:hidden;transition:max-height .35s ease;max-height:3000px}
+.log-full.collapsed{max-height:0}
+.log-preview{margin-bottom:4px}
+.completion-dots{display:flex;gap:5px;align-items:center;margin-bottom:8px;font-size:13px;color:var(--muted)}
+.completion-dots .cd-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;transition:background .3s;border:2px solid transparent}
+.completion-dots .cd-label{margin-left:4px;font-weight:600}
+.recovery-note{padding:10px 14px;border-radius:var(--radius);font-size:13px;line-height:1.4;margin-bottom:12px;border-left:3px solid}
+.recovery-note.rn-info{background:rgba(41,128,185,.1);border-color:var(--ceph);color:var(--ceph)}
+.recovery-note.rn-success{background:rgba(0,184,148,.1);border-color:var(--success);color:var(--success)}
+.recovery-note.rn-warn{background:var(--warn-bg);border-color:var(--warn-border);color:var(--warn-border)}
+body.bedside .recovery-note,body.bedside .warnings{display:none}
+/* Phase 5: Polish — touch targets, transitions, reduced motion */
+.log-remove{min-width:48px;min-height:48px;display:flex;align-items:center;justify-content:center}
+.btn-reminder{min-height:48px}
+.warnings-toggle{min-height:48px}
+.card-badge{font-size:13px;padding:3px 9px}
+.card-warn{font-size:13px}
+.card{transition:transform .15s ease,box-shadow .15s ease}
+.card:active{transform:scale(.985)}
+.timer-fill,.nuc-timer-fill,.tylenol-fill{transition:width 1s linear}
+.btn-log,.btn-log-next{transition:opacity .2s,transform .1s,background .2s}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:0.01ms!important;animation-iteration-count:1!important;transition-duration:0.01ms!important}
+}
 @media print{
   header{position:static;background:#333!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .btn-log,.log-remove,.actions{display:none!important}
+  .btn-log,.log-remove,.actions,.next-up{display:none!important}
   .card{break-inside:avoid;box-shadow:none;border:1px solid #ccc}
   .modal-overlay{display:none!important}
   body{background:#fff}main{max-width:100%}
@@ -112,7 +248,10 @@ main{max-width:800px;margin:0 auto;padding:12px}
 </head>
 <body>
 <header>
-  <h1>Amanda's Med Tracker</h1>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start">
+    <h1>Amanda's Med Tracker</h1>
+    <button class="bedside-toggle" id="bedside-btn" onclick="toggleBedside()" title="Toggle bedside/night mode" aria-label="Toggle bedside night mode" role="switch" aria-checked="false">&#9790;</button>
+  </div>
   <div class="header-meta">
     <span>Surgery: March 9, 2026</span>
     <span id="day-counter"></span>
@@ -120,14 +259,20 @@ main{max-width:800px;margin:0 auto;padding:12px}
   </div>
 </header>
 <main>
-  <div class="warnings">
-    <div class="alert alert-danger">
-      <strong>No NSAIDs for 2 Weeks</strong>
-      No Ibuprofen, Advil, Aleve, Aspirin, or Celebrex
-    </div>
-    <div class="alert alert-warn">
-      <strong>Oxycodone + Valium Separation</strong>
-      Must wait at least 1 hour between these two medications
+  <div class="warnings" id="warnings-section">
+    <button class="warnings-toggle" onclick="toggleWarnings()" aria-expanded="true" aria-controls="warnings-content" id="warn-toggle-btn">
+      <span class="chevron open" id="warn-chevron">&#9654;</span>
+      <span id="warn-toggle-text">Safety Warnings</span>
+    </button>
+    <div class="warnings-content" id="warnings-content">
+      <div class="alert alert-danger">
+        <strong>No NSAIDs for 2 Weeks</strong>
+        No Ibuprofen, Advil, Aleve, Aspirin, or Celebrex
+      </div>
+      <div class="alert alert-warn">
+        <strong>Oxycodone + Valium Separation</strong>
+        Must wait at least 1 hour between these two medications
+      </div>
     </div>
   </div>
   <div class="tylenol-section">
@@ -137,23 +282,51 @@ main{max-width:800px;margin:0 auto;padding:12px}
     </div>
     <div class="tylenol-bar"><div class="tylenol-fill" id="tyl-fill"></div></div>
   </div>
-  <div class="med-cards" id="med-cards"></div>
-  <div class="log-section">
-    <h2>Dose Log</h2>
-    <div id="dose-log"></div>
+  <div id="recovery-note" aria-live="polite"></div>
+  <div class="next-up" id="next-up" aria-label="Next medication due"></div>
+  <div class="med-cards" id="med-cards" role="list" aria-label="All medications"></div>
+  <div class="log-section" id="log-section">
+    <h2 onclick="toggleLog()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLog()}" role="button" aria-expanded="true" aria-controls="log-full" tabindex="0">
+      <span>Dose Log <span class="log-count" id="log-count"></span></span>
+      <span class="chevron open" id="log-chevron">&#9654;</span>
+    </h2>
+    <div class="log-preview" id="log-preview"></div>
+    <div class="log-full" id="log-full"></div>
   </div>
   <div class="actions">
     <button onclick="handleExport()">Export Log</button>
     <button onclick="handleClear()">Clear All Data</button>
   </div>
 </main>
-<div class="modal-overlay hidden" id="modal-overlay" onclick="if(event.target===this)closeModal()">
+<div class="alert-banner" id="alert-banner" role="alert" aria-live="assertive">
+  <div class="ab-text" id="ab-text"></div>
+  <div class="ab-actions">
+    <button class="ab-log" id="ab-log-btn">Log</button>
+    <button class="ab-dismiss" onclick="dismissAlertBanner()">&times;</button>
+  </div>
+</div>
+<div class="modal-overlay hidden" id="modal-overlay" role="dialog" aria-modal="true" aria-label="Medication action" onclick="if(event.target===this)closeModal()">
   <div class="modal" id="modal"></div>
 </div>
 <script>
 // Register service worker for offline + PWA install
+// Auto-update: checks for new version every 5 min + on tab focus, auto-reloads
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
+  navigator.serviceWorker.register('/sw.js').then(reg => {
+    // Check for updates every 5 minutes
+    setInterval(() => reg.update().catch(() => {}), 5 * 60 * 1000);
+    // Check on tab visibility change (e.g. switching back to app)
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reg.update().catch(() => {});
+    });
+  }).catch(() => {});
+  // When a new SW takes control, reload to get the fresh version
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing) return;
+    refreshing = true;
+    window.location.reload();
+  });
 }
 
 const SURGERY_DATE = '2026-03-09';
@@ -198,7 +371,7 @@ function seedState() {
     {id:6,medId:'tylenol',time:d+'T12:00:00',tabs:2,mg:1000}
   ], nextId:7 };
 }
-function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+function save() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) { console.error('save failed (storage full?):', e); } }
 
 function getMed(id) { return MEDS.find(m=>m.id===id); }
 function now() { return new Date(); }
@@ -206,7 +379,7 @@ function todayStr() { return fmt(now(),'date'); }
 function fmt(d,type) {
   const dt = new Date(d);
   if(type==='time') return dt.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
-  if(type==='date') return dt.toISOString().slice(0,10);
+  if(type==='date') return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
   return dt.toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
 }
 function minAgo(isoStr) { return (now()-new Date(isoStr))/60000; }
@@ -224,24 +397,214 @@ function tylenol24h() {
   return state.doses.filter(d=>d.medId==='tylenol'&&new Date(d.time)>=cutoff).reduce((s,d)=>s+d.mg,0);
 }
 
-function addDose(medId,tabs) {
-  const med=getMed(medId);
-  const mg=med.perTab*tabs;
-  state.doses.push({id:state.nextId++, medId, time:now().toISOString(), tabs, mg});
-  save(); render();
+// Retroactive time selector
+window._doseTimeOffset = 0; // 0=just now, >0=minutes ago, -1=custom time input
+function renderTimeSelector() {
+  const n=now(), hh=String(n.getHours()).padStart(2,'0'), mm=String(n.getMinutes()).padStart(2,'0');
+  return `<div class="time-selector">
+    <div class="ts-label">When was it taken?</div>
+    <div class="ts-chips">
+      <button type="button" class="ts-chip active" onclick="selectTimeChip(this,0)">Just now</button>
+      <button type="button" class="ts-chip" onclick="selectTimeChip(this,5)">5m ago</button>
+      <button type="button" class="ts-chip" onclick="selectTimeChip(this,15)">15m ago</button>
+      <button type="button" class="ts-chip" onclick="selectTimeChip(this,30)">30m ago</button>
+      <button type="button" class="ts-chip" onclick="selectTimeChip(this,60)">1hr ago</button>
+      <button type="button" class="ts-chip" onclick="showCustomTime(this)">Other\u2026</button>
+    </div>
+    <div class="ts-custom" id="ts-custom">
+      <span class="ts-custom-label">Time taken:</span>
+      <input type="time" id="ts-custom-time" value="${hh}:${mm}" onchange="onCustomTimeChange()">
+    </div>
+  </div>`;
 }
-function removeDose(id) {
-  state.doses=state.doses.filter(d=>d.id!==id);
-  save(); render();
+function selectTimeChip(el, mins) {
+  document.querySelectorAll('.ts-chip').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active');
+  window._doseTimeOffset = mins;
+  const custom=document.getElementById('ts-custom');
+  if(custom) custom.classList.remove('visible');
+}
+function showCustomTime(el) {
+  document.querySelectorAll('.ts-chip').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active');
+  window._doseTimeOffset = -1;
+  const custom=document.getElementById('ts-custom');
+  if(custom) custom.classList.add('visible');
+  const n=now(), input=document.getElementById('ts-custom-time');
+  if(input) input.value=String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');
+}
+function onCustomTimeChange() { window._doseTimeOffset = -1; }
+function getDoseTime() {
+  if(window._doseTimeOffset===0) return now().toISOString();
+  if(window._doseTimeOffset>0) return new Date(Date.now()-window._doseTimeOffset*60000).toISOString();
+  // Custom time input
+  const input=document.getElementById('ts-custom-time');
+  if(input&&input.value){
+    const [h,m]=input.value.split(':').map(Number);
+    const d=new Date(); d.setHours(h,m,0,0);
+    if(d>now()) d.setDate(d.getDate()-1); // if time is ahead, assume yesterday
+    return d.toISOString();
+  }
+  return now().toISOString();
 }
 
-// Rendering
+function addDose(medId,tabs,customTime) {
+  try {
+    const med=getMed(medId);
+    if(!med){console.error('addDose: unknown med',medId);return;}
+    const mg=med.perTab*tabs;
+    const doseTime=customTime||getDoseTime();
+    if(!doseTime||isNaN(new Date(doseTime).getTime())){console.error('addDose: invalid time',doseTime);return;}
+    state.doses.push({id:state.nextId++, medId, time:doseTime, tabs, mg});
+    // Haptic feedback on dose confirmation
+    if (navigator.vibrate) navigator.vibrate(50);
+    // Reset alert state for this med so it can re-alert next interval
+    prevAvailability[medId] = false;
+    save(); render();
+    maybeRequestNotifications();
+    dismissAlertBanner();
+  } catch(e) {
+    console.error('addDose error:',e);
+    try{save();render();}catch(e2){console.error('addDose recovery failed:',e2);}
+  }
+}
+function removeDose(id) {
+  try {
+    state.doses=state.doses.filter(d=>d.id!==id);
+    save(); render();
+  } catch(e) { console.error('removeDose error:',e); try{save();render();}catch(e2){} }
+}
+
+// Next Up queue logic
+function getNextUpQueue() {
+  const queue = [];
+  MEDS.forEach(med => {
+    const todayCount = todayDoses(med.id);
+    if (med.maxDoses && todayCount.length >= med.maxDoses) return;
+    if (med.id === 'tylenol' && tylenol24h() >= 4000) return;
+    const last = lastDose(med.id);
+    let minutesUntil = 0;
+    let isAvailable = true;
+    let isOverdue = false;
+    let pct = 100;
+    if (last) {
+      const ago = minAgo(last.time);
+      pct = Math.min(100, ago / med.intervalMin * 100);
+      if (ago < med.intervalMin) {
+        minutesUntil = med.intervalMin - ago;
+        isAvailable = false;
+      } else {
+        isOverdue = (ago - med.intervalMin) > 30;
+      }
+    }
+    queue.push({ med, minutesUntil, isAvailable, isOverdue, pct });
+  });
+  queue.sort((a, b) => {
+    if (a.isOverdue !== b.isOverdue) return a.isOverdue ? -1 : 1;
+    if (a.isAvailable !== b.isAvailable) return a.isAvailable ? -1 : 1;
+    const timeDiff = a.minutesUntil - b.minutesUntil;
+    if (Math.abs(timeDiff) > 0.5) return timeDiff;
+    // Stable tiebreakers: scheduled meds first (easiest to forget), then array order
+    if (a.med.scheduled !== b.med.scheduled) return a.med.scheduled ? -1 : 1;
+    return MEDS.indexOf(a.med) - MEDS.indexOf(b.med);
+  });
+  return queue;
+}
+
+function renderNextUp() {
+  const container = document.getElementById('next-up');
+  const queue = getNextUpQueue();
+  if (queue.length === 0) {
+    container.innerHTML = '<div class="next-up-clear"><div class="nuc-calm">All caught up!</div><div class="nuc-detail">Every scheduled medication is on track. Great job.</div></div>';
+    return;
+  }
+  const primary = queue[0];
+  const rest = queue.slice(1, 4);
+  // If nothing available for 2+ hours, show a calm message
+  if (!primary.isAvailable && primary.minutesUntil > 120) {
+    container.innerHTML = `<div class="next-up-clear"><div class="nuc-calm">All clear — you're on track</div><div class="nuc-detail">Next up: ${primary.med.name} in ${minsToHM(primary.minutesUntil)}. Relax until then.</div></div>`;
+    return;
+  }
+  const cardClass = primary.isOverdue ? 'nuc-overdue' : primary.isAvailable ? 'nuc-available' : '';
+  const dotClass = primary.isOverdue ? 'red' : primary.isAvailable ? 'green' : 'gray';
+  let statusText;
+  if (primary.isOverdue) {
+    const last = lastDose(primary.med.id);
+    const overtime = last ? Math.round(minAgo(last.time) - primary.med.intervalMin) : 0;
+    statusText = `Overdue by ${minsToHM(overtime)}`;
+  } else if (primary.isAvailable) {
+    statusText = 'Ready now';
+  } else {
+    statusText = `Due in ${minsToHM(primary.minutesUntil)}`;
+  }
+  const canLog = primary.isAvailable;
+  const btnLabel = canLog ? 'Log Dose Now' : `Due in ${minsToHM(primary.minutesUntil)}`;
+  const fillColor = primary.isAvailable ? 'var(--success)' : primary.med.color;
+  let html = `<div class="next-up-label">Next Up</div>
+    <div class="next-up-card ${cardClass}">
+      <div class="nuc-header">
+        <div>
+          <div class="nuc-name" style="color:${primary.med.color}">${primary.med.name}</div>
+          ${primary.med.brand ? `<div class="nuc-brand">${primary.med.brand}</div>` : ''}
+        </div>
+        <div class="card-badge" style="background:${primary.med.bgBadge};color:${primary.med.color}">${primary.med.purpose}</div>
+      </div>
+      <div class="nuc-dose">${primary.med.dose} &mdash; ${primary.med.freq}</div>
+      <div class="nuc-status"><span class="dot ${dotClass}"></span>${statusText}</div>
+      <div class="nuc-timer-bar"><div class="nuc-timer-fill" style="width:${primary.pct}%;background:${fillColor}"></div></div>
+      ${!canLog ? `<button class="btn-reminder" onclick="event.stopPropagation();downloadReminder('${primary.med.id}')" style="margin-bottom:12px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="7"/><path d="M12 9v4l2.5 1.5"/><path d="M5 3L2 6M22 6l-3-3"/></svg>Set phone alarm for when it\u2019s due</button>` : ''}
+      <button class="btn-log-next" style="background:${primary.med.color}" onclick="handleLog('${primary.med.id}')" ${canLog ? '' : 'disabled'}>${btnLabel}</button>
+    </div>`;
+  // Validate expanded med is still in queue (may have been promoted to primary or removed)
+  if (nqiExpandedMedId && !rest.find(i => i.med.id === nqiExpandedMedId)) {
+    nqiExpandedMedId = null;
+  }
+  if (rest.length > 0) {
+    // Section toggle
+    const secOpen = !nqiSectionCollapsed;
+    html += `<button class="nqi-section-toggle" onclick="toggleNqiSection()" aria-expanded="${secOpen}" aria-controls="nqi-queue-wrap">
+      <span>Then (${rest.length} more)</span>
+      <span class="chevron ${secOpen ? 'open' : ''}">▼</span>
+    </button>`;
+    // Collapsible wrapper
+    html += `<div id="nqi-queue-wrap" class="nqi-queue-wrap ${nqiSectionCollapsed ? 'collapsed' : ''}">`;
+    html += '<div class="next-up-queue">';
+    rest.forEach(item => {
+      const t = item.isOverdue ? 'Overdue' : item.isAvailable ? 'Ready' : minsToHM(item.minutesUntil);
+      const isExp = nqiExpandedMedId === item.med.id;
+      const canLog = item.isAvailable || item.isOverdue;
+      const dotCls = canLog ? (item.isOverdue ? 'red' : 'green') : 'gray';
+      // Queue row (tappable)
+      html += `<div class="nqi" onclick="toggleNqiItem('${item.med.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleNqiItem('${item.med.id}')}" role="button" tabindex="0" aria-expanded="${isExp}">
+        <div class="nqi-dot" style="background:${item.med.color}"></div>
+        <div class="nqi-name">${item.med.name}</div>
+        <div class="nqi-time">${t}</div>
+        <span class="nqi-chevron ${isExp ? 'open' : ''}">▼</span>
+      </div>`;
+      // Expanded detail panel
+      html += `<div class="nqi-detail ${isExp ? 'open' : ''}">
+        <div class="nqi-detail-dose">${item.med.dose} — ${item.med.freq}</div>
+        <div class="nqi-detail-status"><span class="dot ${dotCls}"></span>${canLog ? (item.isOverdue ? 'Overdue' : 'Available now') : 'Available in ' + minsToHM(item.minutesUntil)}</div>
+        <button class="nqi-btn-log" style="background:${item.med.color}" onclick="event.stopPropagation();handleLog('${item.med.id}')" ${canLog ? '' : 'disabled'}>
+          ${canLog ? 'Log Dose' : 'Not yet available'}
+        </button>
+        ${!canLog ? `<button class="nqi-btn-reminder" onclick="event.stopPropagation();downloadReminder('${item.med.id}')">⏰ Set alarm</button>` : ''}
+      </div>`;
+    });
+    html += '</div></div>';
+  }
+  container.innerHTML = html;
+}
+
+// Rendering — each call is try-caught so one failure doesn't break all updates
 function render() {
-  renderClock();
-  renderDayCounter();
-  renderTylenolMeter();
-  renderCards();
-  renderLog();
+  try{renderClock();}catch(e){console.error('renderClock:',e);}
+  try{renderDayCounter();}catch(e){console.error('renderDayCounter:',e);}
+  try{renderTylenolMeter();}catch(e){console.error('renderTylenolMeter:',e);}
+  try{renderRecoveryNote();}catch(e){console.error('renderRecoveryNote:',e);}
+  try{renderNextUp();}catch(e){console.error('renderNextUp:',e);}
+  try{renderCards();}catch(e){console.error('renderCards:',e);}
+  try{renderLog();}catch(e){console.error('renderLog:',e);}
 }
 
 function renderClock() {
@@ -281,7 +644,7 @@ function renderCards() {
     if(tylAt4k){statusDot='red';statusText='24hr limit reached (4000mg)';}
     const disabled=tylAt4k||atMax;
     const warnsHtml=med.warns.map(w=>`<div class="card-warn">${w}</div>`).join('');
-    return `<div class="card">
+    return `<div class="card" role="listitem" aria-label="${med.name} medication card">
       <div class="card-accent" style="background:${med.color}"></div>
       <div class="card-body">
         <div class="card-top">
@@ -295,8 +658,9 @@ function renderCards() {
         <div class="card-status"><span class="dot ${statusDot}"></span>${statusText}</div>
         <div class="card-timer">${last?`Last: ${fmt(last.time,'time')} (${minsToHM(ago)} ago)`:'No doses logged yet'}</div>
         <div class="timer-bar"><div class="timer-fill" style="width:${pct}%;background:${available?getComputedStyle(document.documentElement).getPropertyValue('--success'):med.color}"></div></div>
-        <div class="card-today">Today: ${todayCount.length} dose${todayCount.length!==1?'s':''}${todayMg?' ('+todayMg+'mg)':''}</div>
+        ${med.maxDoses ? `<div class="completion-dots">${Array.from({length:med.maxDoses},(_,i)=>`<span class="cd-dot" style="border-color:${med.color};${i<todayCount.length?'background:'+med.color:''}"></span>`).join('')}<span class="cd-label">${todayCount.length >= med.maxDoses ? 'All done!' : todayCount.length === 0 ? '0 of '+med.maxDoses+' today' : todayCount.length+' of '+med.maxDoses+' — '+(med.maxDoses-todayCount.length)+' to go'}</span></div>` : `<div class="card-today">Today: ${todayCount.length} dose${todayCount.length!==1?'s':''}${todayMg?' ('+todayMg+'mg)':''}</div>`}
         ${warnsHtml}
+        <button class="btn-reminder" onclick="event.stopPropagation();downloadReminder('${med.id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="7"/><path d="M12 9v4l2.5 1.5"/><path d="M5 3L2 6M22 6l-3-3"/></svg>Set Reminder</button>
         <button class="btn-log" style="background:${med.color}" onclick="handleLog('${med.id}')" ${disabled?'disabled':''}>${disabled?'Limit Reached':'Log Dose'}</button>
       </div>
     </div>`;
@@ -304,14 +668,17 @@ function renderCards() {
 }
 
 function renderLog() {
-  const container=document.getElementById('dose-log');
+  const previewEl=document.getElementById('log-preview');
+  const fullEl=document.getElementById('log-full');
+  const countEl=document.getElementById('log-count');
   const sorted=[...state.doses].sort((a,b)=>new Date(b.time)-new Date(a.time));
-  if(!sorted.length){container.innerHTML='<div class="log-empty">No doses logged yet</div>';return;}
+  countEl.textContent = sorted.length > 0 ? `(${sorted.length})` : '';
+  if(!sorted.length){previewEl.innerHTML='<div class="log-empty">No doses logged yet</div>';fullEl.innerHTML='';return;}
   let tylRunning=0;
   const tylSorted=[...state.doses].filter(d=>d.medId==='tylenol').sort((a,b)=>new Date(a.time)-new Date(b.time));
   const tylTotals={};
   tylSorted.forEach(d=>{tylRunning+=d.mg;tylTotals[d.id]=tylRunning;});
-  container.innerHTML=sorted.map(d=>{
+  const renderEntry = d => {
     const med=getMed(d.medId);
     const tabLabel=d.tabs>1?`${d.tabs} tabs`:'1 tab';
     const mgLabel=d.mg?` (${d.mg}mg)`:'';
@@ -325,32 +692,218 @@ function renderLog() {
       </div>
       <button class="log-remove" onclick="handleRemove(${d.id})" title="Remove this entry">&times;</button>
     </div>`;
-  }).join('');
+  };
+  // Show last 3 as preview (always visible)
+  const preview = sorted.slice(0, 3);
+  const rest = sorted.slice(3);
+  previewEl.innerHTML = preview.map(renderEntry).join('');
+  fullEl.innerHTML = rest.map(renderEntry).join('');
 }
 
+// === Alert & Reminder System ===
+let prevAvailability = {};
+let alertsInitialized = false;
+let alertBannerTimeout = null;
+
+function playChime() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const t = ctx.currentTime;
+    // Gentle ascending two-tone chime (C5 → E5)
+    [523.25, 659.25].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      const start = t + i * 0.2;
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.15, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.45);
+      osc.start(start);
+      osc.stop(start + 0.45);
+    });
+  } catch(e) {}
+}
+
+function showAlertBanner(text, isOverdue, medId) {
+  const banner = document.getElementById('alert-banner');
+  const textEl = document.getElementById('ab-text');
+  const logBtn = document.getElementById('ab-log-btn');
+  textEl.textContent = text;
+  banner.className = 'alert-banner ab-visible ' + (isOverdue ? 'ab-overdue' : 'ab-ready');
+  logBtn.onclick = () => { dismissAlertBanner(); handleLog(medId); };
+  clearTimeout(alertBannerTimeout);
+  alertBannerTimeout = setTimeout(dismissAlertBanner, 30000); // auto-dismiss after 30s
+}
+
+function dismissAlertBanner() {
+  const banner = document.getElementById('alert-banner');
+  banner.classList.remove('ab-visible');
+  clearTimeout(alertBannerTimeout);
+}
+
+function fireNotification(medName, isOverdue) {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try {
+      new Notification(isOverdue ? medName + ' is overdue' : 'Time for ' + medName, {
+        body: isOverdue ? 'Tap to open tracker and log dose' : medName + ' is now available',
+        icon: '/icon.svg',
+        tag: 'med-reminder-' + medName,
+        renotify: true
+      });
+    } catch(e) {}
+  }
+}
+
+function checkAlerts(forceOverdueCheck) {
+  const queue = getNextUpQueue();
+  // First run: record current state without alerting
+  if (!alertsInitialized) {
+    queue.forEach(item => { prevAvailability[item.med.id] = item.isAvailable; });
+    alertsInitialized = true;
+    if (forceOverdueCheck) {
+      const overdue = queue.filter(q => q.isOverdue);
+      if (overdue.length > 0) {
+        showAlertBanner(overdue[0].med.name + ' is overdue \u2014 tap to log', true, overdue[0].med.id);
+      }
+    }
+    return;
+  }
+  // Detect meds that just became available
+  let newlyAvailable = [];
+  queue.forEach(item => {
+    const wasAvailable = prevAvailability[item.med.id] || false;
+    prevAvailability[item.med.id] = item.isAvailable;
+    if (item.isAvailable && !wasAvailable) {
+      newlyAvailable.push(item);
+    }
+  });
+  if (newlyAvailable.length > 0) {
+    const primary = newlyAvailable[0];
+    showAlertBanner('Time for ' + primary.med.name, false, primary.med.id);
+    playChime();
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+    fireNotification(primary.med.name, false);
+  }
+  // On visibility change, surface overdue meds
+  if (forceOverdueCheck) {
+    const overdue = queue.filter(q => q.isOverdue);
+    if (overdue.length > 0 && newlyAvailable.length === 0) {
+      showAlertBanner(overdue[0].med.name + ' is overdue \u2014 tap to log', true, overdue[0].med.id);
+      playChime();
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
+      fireNotification(overdue[0].med.name, true);
+    }
+  }
+}
+
+// Request notification permission on first interaction
+function maybeRequestNotifications() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
+// Calendar reminder (.ics) download
+function downloadReminder(medId) {
+  const med = getMed(medId);
+  if (!med) return;
+  const last = lastDose(medId);
+  let nextTime;
+  if (last) {
+    nextTime = new Date(new Date(last.time).getTime() + med.intervalMin * 60000);
+    if (nextTime < now()) nextTime = new Date(now().getTime() + 5 * 60000);
+  } else {
+    nextTime = new Date(now().getTime() + 30 * 60000);
+  }
+  const end = new Date(nextTime.getTime() + 5 * 60000);
+  const pad = n => String(n).padStart(2, '0');
+  const icsDate = d => d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + 'T' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+  const ics = [
+    'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//AmandaMeds//EN',
+    'BEGIN:VEVENT',
+    'DTSTART:' + icsDate(nextTime),
+    'DTEND:' + icsDate(end),
+    'SUMMARY:Take ' + med.name + (med.brand ? ' (' + med.brand + ')' : ''),
+    'DESCRIPTION:' + med.dose + ' - ' + med.freq,
+    'BEGIN:VALARM','TRIGGER:-PT0M','ACTION:DISPLAY',
+    'DESCRIPTION:Time for ' + med.name,
+    'END:VALARM',
+    'BEGIN:VALARM','TRIGGER:-PT5M','ACTION:DISPLAY',
+    'DESCRIPTION:' + med.name + ' in 5 minutes',
+    'END:VALARM',
+    'END:VEVENT','END:VCALENDAR'
+  ].join('\r\n');
+  const blob = new Blob([ics], { type: 'text/calendar' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'reminder-' + med.name.toLowerCase().replace(/\s+/g, '-') + '.ics';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// Overdue detection on app resume
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    render();
+    checkAlerts(true);
+  }
+});
+
+// Start alert check loop (every 30 seconds)
+checkAlerts(false); // initialize state
+setInterval(() => checkAlerts(false), 30000);
+
 // Modal
-function showModal(html){document.getElementById('modal').innerHTML=html;document.getElementById('modal-overlay').classList.remove('hidden');}
-function closeModal(){document.getElementById('modal-overlay').classList.add('hidden');}
+let _modalReturnFocus = null;
+function showModal(html){
+  window._doseTimeOffset = 0; // Reset time selector for each new modal
+  _modalReturnFocus = document.activeElement;
+  document.getElementById('modal').innerHTML='<div class="modal-handle"></div>'+html;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+  // Enable time selector and focus after modal animation settles (prevents phantom taps during slide-up)
+  setTimeout(() => {
+    const ts = document.querySelector('.time-selector');
+    if (ts) ts.classList.add('ts-ready');
+    const btn = document.querySelector('.modal .btn-confirm, .modal .btn-cancel, .modal .btn-danger');
+    if (btn) btn.focus();
+  }, 400);
+}
+function closeModal(){
+  document.getElementById('modal-overlay').classList.add('hidden');
+  if (_modalReturnFocus) { _modalReturnFocus.focus(); _modalReturnFocus = null; }
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !document.getElementById('modal-overlay').classList.contains('hidden')) {
+    closeModal();
+  }
+});
 
 // Dose logging handlers
 function handleLog(medId) {
-  const med=getMed(medId);
-  if(medId==='oxycodone') return showOxyModal(med);
-  if(medId==='tylenol') return showTylModal(med);
-  if(medId==='diazepam') return showDiaModal(med);
-  // Simple confirm for others
-  const last=lastDose(medId);
-  const ago=last?minAgo(last.time):null;
-  let earlyWarn='';
-  if(ago!==null&&ago<med.intervalMin){
-    earlyWarn=`<p style="color:var(--warn-border)">Last dose was ${minsToHM(ago)} ago. Minimum interval is ${minsToHM(med.intervalMin)}.</p>`;
-  }
-  showModal(`<h3>Log ${med.name}${med.brand?' ('+med.brand+')':''}</h3>
-    <p>${med.dose}</p>${earlyWarn}
-    <div class="modal-actions">
-      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
-      <button class="btn-confirm" onclick="addDose('${medId}',1);closeModal()">Confirm</button>
-    </div>`);
+  try {
+    const med=getMed(medId);
+    if(!med){console.error('handleLog: unknown med',medId);return;}
+    if(medId==='oxycodone') return showOxyModal(med);
+    if(medId==='tylenol') return showTylModal(med);
+    if(medId==='diazepam') return showDiaModal(med);
+    // Simple confirm for others
+    const last=lastDose(medId);
+    const ago=last?minAgo(last.time):null;
+    let earlyWarn='';
+    if(ago!==null&&ago<med.intervalMin){
+      earlyWarn=`<p style="color:var(--warn-border)">Last dose was ${minsToHM(ago)} ago. Minimum interval is ${minsToHM(med.intervalMin)}.</p>`;
+    }
+    showModal(`<h3>Log ${med.name}${med.brand?' ('+med.brand+')':''}</h3>
+      <p>${med.dose}</p>${earlyWarn}
+      ${renderTimeSelector()}
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+        <button class="btn-confirm" onclick="addDose('${medId}',1);closeModal()">Confirm</button>
+      </div>`);
+  } catch(e) { console.error('handleLog error:',e); }
 }
 
 function showOxyModal(med) {
@@ -363,10 +916,11 @@ function showOxyModal(med) {
   showModal(`<h3>Log Oxycodone</h3>${earlyWarn}
     <p style="font-weight:600;margin-bottom:6px">How many tablets?</p>
     <div class="modal-tabs" id="oxy-tabs">
-      <div class="modal-tab active" onclick="selectTab(this,'oxy-tabs',1)">1 tab<span class="sub">5mg</span></div>
-      <div class="modal-tab" onclick="selectTab(this,'oxy-tabs',2)">2 tabs<span class="sub">10mg</span></div>
+      <button type="button" class="modal-tab active" onclick="selectTab(this,'oxy-tabs',1)">1 tab<span class="sub">5mg</span></button>
+      <button type="button" class="modal-tab" onclick="selectTab(this,'oxy-tabs',2)">2 tabs<span class="sub">10mg</span></button>
     </div>
     <label class="modal-check"><input type="checkbox" id="oxy-hyd-check" checked> Also give Hydroxyzine (Vistaril) 25mg for nausea</label>
+    ${renderTimeSelector()}
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
       <button class="btn-confirm" onclick="confirmOxy()">Log Dose</button>
@@ -374,9 +928,12 @@ function showOxyModal(med) {
   window._oxyTabs=1;
 }
 function confirmOxy() {
-  addDose('oxycodone', window._oxyTabs||1);
-  if(document.getElementById('oxy-hyd-check').checked) addDose('hydroxyzine',1);
-  closeModal();
+  try {
+    addDose('oxycodone', window._oxyTabs||1);
+    const hydCheck=document.getElementById('oxy-hyd-check');
+    if(hydCheck&&hydCheck.checked) addDose('hydroxyzine',1);
+    closeModal();
+  } catch(e) { console.error('confirmOxy error:',e); closeModal(); }
 }
 
 function showTylModal(med) {
@@ -396,18 +953,22 @@ function showTylModal(med) {
   showModal(`<h3>Log Tylenol (Acetaminophen)</h3>${earlyWarn}
     <p style="font-weight:600;margin-bottom:6px">How many tablets?</p>
     <div class="modal-tabs" id="tyl-tabs">
-      <div class="modal-tab" onclick="selectTab(this,'tyl-tabs',1)">1 tab<span class="sub">500mg &rarr; ${after1}mg total${warn1}</span></div>
-      <div class="modal-tab active" onclick="selectTab(this,'tyl-tabs',2)">2 tabs<span class="sub">1000mg &rarr; ${after2}mg total${warn2}</span></div>
+      <button type="button" class="modal-tab" onclick="selectTab(this,'tyl-tabs',1)">1 tab<span class="sub">500mg &rarr; ${after1}mg total${warn1}</span></button>
+      <button type="button" class="modal-tab active" onclick="selectTab(this,'tyl-tabs',2)">2 tabs<span class="sub">1000mg &rarr; ${after2}mg total${warn2}</span></button>
     </div>
     ${after2>4000?'<div class="warn-box">Taking 2 tablets would exceed the 4000mg daily maximum!</div>':''}
     <p style="font-size:13px;color:var(--muted)">24hr total so far: ${current}mg / 4000mg</p>
+    ${renderTimeSelector()}
     <div class="modal-actions" style="margin-top:12px">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
       <button class="btn-confirm" onclick="confirmTyl()">Log Dose</button>
     </div>`);
   window._tylTabs=2;
 }
-function confirmTyl() { addDose('tylenol', window._tylTabs||2); closeModal(); }
+function confirmTyl() {
+  try { addDose('tylenol', window._tylTabs||2); closeModal(); }
+  catch(e) { console.error('confirmTyl error:',e); closeModal(); }
+}
 
 function showDiaModal(med) {
   const lastOxy=lastDose('oxycodone');
@@ -428,6 +989,7 @@ function showDiaModal(med) {
     :`<button class="btn-confirm" onclick="addDose('diazepam',1);closeModal()">Log Dose</button>`;
   showModal(`<h3>Log Diazepam (Valium) 5mg</h3>${conflictWarn}${earlyWarn}
     <p>Muscle relaxer &mdash; 1 tablet</p>
+    ${renderTimeSelector()}
     <div class="modal-actions" style="margin-top:14px">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
       ${confirmBtn}
@@ -474,28 +1036,140 @@ function handleClear() {
     </div>`);
 }
 
-// Timer loop
-setInterval(()=>{renderClock();renderDayCounter();renderTylenolMeter();
-  // Update status text on cards without full re-render
-  document.querySelectorAll('.card').forEach((card,i)=>{
-    const med=MEDS[i]; if(!med) return;
-    const last=lastDose(med.id);
-    if(!last) return;
-    const ago=minAgo(last.time);
-    const remaining=med.intervalMin-ago;
-    const available=ago>=med.intervalMin;
-    const pct=Math.min(100,ago/med.intervalMin*100);
-    const statusEl=card.querySelector('.card-status');
-    const timerEl=card.querySelector('.card-timer');
-    const fillEl=card.querySelector('.timer-fill');
-    if(statusEl){
-      const dot=available?'green':'gray';
-      const txt=available?'Available now':`Available in ${minsToHM(remaining)}`;
-      statusEl.innerHTML=`<span class="dot ${dot}"></span>${txt}`;
+// === Phase 4: Progressive Disclosure ===
+function getRecoveryDay() {
+  return Math.floor((now() - new Date(SURGERY_DATE + 'T00:00:00')) / 86400000);
+}
+
+let warningsCollapsed = false;
+let logCollapsed = false;
+let nqiSectionCollapsed = false;
+let nqiExpandedMedId = null;
+
+function toggleWarnings() {
+  warningsCollapsed = !warningsCollapsed;
+  const content = document.getElementById('warnings-content');
+  const chevron = document.getElementById('warn-chevron');
+  const btn = document.getElementById('warn-toggle-btn');
+  content.classList.toggle('collapsed', warningsCollapsed);
+  chevron.classList.toggle('open', !warningsCollapsed);
+  if (btn) btn.setAttribute('aria-expanded', !warningsCollapsed);
+}
+function toggleLog() {
+  logCollapsed = !logCollapsed;
+  const full = document.getElementById('log-full');
+  const chevron = document.getElementById('log-chevron');
+  const h2 = full.parentElement.querySelector('h2');
+  full.classList.toggle('collapsed', logCollapsed);
+  chevron.classList.toggle('open', !logCollapsed);
+  if (h2) h2.setAttribute('aria-expanded', !logCollapsed);
+}
+function toggleNqiSection() {
+  nqiSectionCollapsed = !nqiSectionCollapsed;
+  const wrap = document.getElementById('nqi-queue-wrap');
+  if (wrap) wrap.classList.toggle('collapsed', nqiSectionCollapsed);
+  const btn = document.querySelector('.nqi-section-toggle');
+  if (btn) {
+    btn.setAttribute('aria-expanded', !nqiSectionCollapsed);
+    const chev = btn.querySelector('.chevron');
+    if (chev) chev.classList.toggle('open', !nqiSectionCollapsed);
+  }
+}
+function toggleNqiItem(medId) {
+  nqiExpandedMedId = (nqiExpandedMedId === medId) ? null : medId;
+  try { renderNextUp(); } catch(e) { console.error('renderNextUp:', e); }
+}
+
+// Auto-collapse warnings after day 2
+function initWarningsState() {
+  const day = getRecoveryDay();
+  if (day >= 2) {
+    warningsCollapsed = true;
+    const content = document.getElementById('warnings-content');
+    const chevron = document.getElementById('warn-chevron');
+    const btn = document.getElementById('warn-toggle-btn');
+    if (content) { content.classList.add('collapsed'); }
+    if (chevron) { chevron.classList.remove('open'); }
+    if (btn) { btn.setAttribute('aria-expanded', 'false'); }
+  }
+}
+
+// Recovery phase notes
+function renderRecoveryNote() {
+  const el = document.getElementById('recovery-note');
+  const day = getRecoveryDay();
+  let html = '';
+  if (day >= 14) {
+    html = '<div class="recovery-note rn-success">Day ' + day + ' — NSAID restriction period may be ending. Check with your surgeon before taking Ibuprofen or Aspirin.</div>';
+  } else if (day >= 7) {
+    html = '<div class="recovery-note rn-info">Day ' + day + ' — Cephalexin course may be ending soon. Check with your doctor about stopping the antibiotic.</div>';
+  } else if (day >= 3) {
+    html = '<div class="recovery-note rn-info">Day ' + day + ' — Focus on keeping up with Cephalexin (antibiotic). If pain is manageable, consider Tylenol-only windows to taper opioid use.</div>';
+  }
+  el.innerHTML = html;
+}
+
+// Bedside / Night Mode
+function toggleBedside() {
+  const active = document.body.classList.toggle('bedside');
+  const btn = document.getElementById('bedside-btn');
+  btn.classList.toggle('active', active);
+  btn.setAttribute('aria-checked', active);
+  localStorage.setItem('amanda-meds-bedside', active ? '1' : '0');
+}
+function initBedside() {
+  const saved = localStorage.getItem('amanda-meds-bedside');
+  const hour = new Date().getHours();
+  const btn = document.getElementById('bedside-btn');
+  if (saved === '1' || (saved === null && (hour >= 22 || hour < 6))) {
+    document.body.classList.add('bedside');
+    btn.classList.add('active');
+    btn.setAttribute('aria-checked', 'true');
+  }
+}
+initBedside();
+initWarningsState();
+
+// Midnight rollover detection — full re-render when the day changes
+let _lastRenderDay = todayStr();
+
+// Timer loop — try-catch each update so errors don't break the interval
+setInterval(()=>{
+  // If the day changed (midnight rollover), do a full re-render to reset card counts, completion dots, etc.
+  try {
+    const currentDay = todayStr();
+    if (currentDay !== _lastRenderDay) {
+      _lastRenderDay = currentDay;
+      render();
+      return; // full render already updated everything
     }
-    if(timerEl) timerEl.textContent=`Last: ${fmt(last.time,'time')} (${minsToHM(ago)} ago)`;
-    if(fillEl){fillEl.style.width=pct+'%';fillEl.style.background=available?getComputedStyle(document.documentElement).getPropertyValue('--success'):med.color;}
-  });
+  } catch(e) {}
+  try{renderClock();}catch(e){}
+  try{renderDayCounter();}catch(e){}
+  try{renderTylenolMeter();}catch(e){}
+  try{renderNextUp();}catch(e){}
+  // Update status text on cards without full re-render
+  try{
+    document.querySelectorAll('.card').forEach((card,i)=>{
+      const med=MEDS[i]; if(!med) return;
+      const last=lastDose(med.id);
+      if(!last) return;
+      const ago=minAgo(last.time);
+      const remaining=med.intervalMin-ago;
+      const available=ago>=med.intervalMin;
+      const pct=Math.min(100,ago/med.intervalMin*100);
+      const statusEl=card.querySelector('.card-status');
+      const timerEl=card.querySelector('.card-timer');
+      const fillEl=card.querySelector('.timer-fill');
+      if(statusEl){
+        const dot=available?'green':'gray';
+        const txt=available?'Available now':`Available in ${minsToHM(remaining)}`;
+        statusEl.innerHTML=`<span class="dot ${dot}"></span>${txt}`;
+      }
+      if(timerEl) timerEl.textContent=`Last: ${fmt(last.time,'time')} (${minsToHM(ago)} ago)`;
+      if(fillEl){fillEl.style.width=pct+'%';fillEl.style.background=available?getComputedStyle(document.documentElement).getPropertyValue('--success'):med.color;}
+    });
+  }catch(e){}
 },1000);
 
 // Init
