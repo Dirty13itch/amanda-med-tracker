@@ -317,40 +317,56 @@ body.bedside *:focus-visible{outline-color:#ffeaa7}
   <div class="modal" id="modal"></div>
 </div>
 <script>
-// Register service worker for offline + PWA install
-// Auto-update: checks for new version every 2 min + on tab focus, auto-reloads
+// Service worker registration with forced update mechanism
+// SW_VERSION: bump this number to force all clients to wipe caches and re-register
+const SW_VERSION = 2;
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).then(reg => {
-    // Check for updates every 2 minutes
-    setInterval(() => reg.update().catch(() => {}), 2 * 60 * 1000);
-    // Check on tab visibility change (e.g. switching back to app)
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') reg.update().catch(() => {});
+  const swKey = 'sw-version';
+  const currentSwVer = parseInt(localStorage.getItem(swKey) || '0');
+  if (currentSwVer < SW_VERSION) {
+    // Nuclear cleanup: unregister all old SWs, wipe all caches, reload fresh
+    Promise.all([
+      navigator.serviceWorker.getRegistrations().then(regs =>
+        Promise.all(regs.map(r => r.unregister()))
+      ),
+      caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))))
+    ]).then(() => {
+      localStorage.setItem(swKey, String(SW_VERSION));
+      window.location.reload();
+    }).catch(() => {
+      localStorage.setItem(swKey, String(SW_VERSION));
+      window.location.reload();
     });
-    // If a waiting worker exists on load, activate it immediately
-    if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-    reg.addEventListener('updatefound', () => {
-      const newWorker = reg.installing;
-      if (newWorker) {
-        newWorker.addEventListener('statechange', () => {
-          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            newWorker.postMessage({ type: 'SKIP_WAITING' });
-          }
-        });
-      }
+  } else {
+    // Normal registration
+    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' }).then(reg => {
+      setInterval(() => reg.update().catch(() => {}), 2 * 60 * 1000);
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') reg.update().catch(() => {});
+      });
+      if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+      reg.addEventListener('updatefound', () => {
+        const newWorker = reg.installing;
+        if (newWorker) {
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              newWorker.postMessage({ type: 'SKIP_WAITING' });
+            }
+          });
+        }
+      });
+    }).catch(() => {});
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
     });
-  }).catch(() => {});
-  // When a new SW takes control, auto-reload to pick up changes
-  let refreshing = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (refreshing) return;
-    refreshing = true;
-    window.location.reload();
-  });
+  }
 }
 
 const SURGERY_DATE = '2026-03-09';
-const APP_VERSION = '20260310-1418';
+const APP_VERSION = '20260310-1420';
 const MEDS = [
   { id:'oxycodone', name:'Oxycodone', brand:'', dose:'5mg', perTab:5, maxTabs:2, purpose:'Pain Relief',
     freq:'1-2 tabs every 4 hrs as needed', intervalMin:240, color:'var(--oxy)', bgBadge:'#fde8e8', scheduled:false,
