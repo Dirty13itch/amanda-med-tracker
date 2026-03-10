@@ -1,10 +1,15 @@
-const CACHE_NAME = 'amanda-meds-20260310-1413';
+const CACHE_NAME = 'amanda-meds-20260310-1418';
 const ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
   '/icon.svg'
 ];
+
+// Listen for skip-waiting message from the page
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
+});
 
 // Install: cache all app assets, take over immediately
 self.addEventListener('install', event => {
