@@ -1055,7 +1055,7 @@ function handleRemove(id) {
 }
 
 function handleExport() {
-  const lines=state.doses.sort((a,b)=>new Date(a.time)-new Date(b.time)).map(d=>{
+  const lines=[...state.doses].sort((a,b)=>new Date(a.time)-new Date(b.time)).map(d=>{
     const med=getMed(d.medId);
     return `${fmt(d.time)}\t${med?med.name:d.medId}\t${d.tabs} tab(s)\t${d.mg}mg`;
   });
