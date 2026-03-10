@@ -199,6 +199,10 @@ body.bedside .nqi-detail .nqi-detail-status{font-size:17px}
 .ab-log{background:rgba(255,255,255,.25);border:none;color:#fff;font-size:14px;font-weight:700;padding:8px 16px;border-radius:6px;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .ab-log:active{background:rgba(255,255,255,.4)}
 .ab-dismiss{background:none;border:none;color:rgba(255,255,255,.7);font-size:24px;cursor:pointer;padding:2px 8px;-webkit-tap-highlight-color:transparent;line-height:1}
+/* SW update toast */
+.update-banner{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(100px);background:#2d3436;color:#fff;padding:10px 16px;border-radius:10px;display:flex;align-items:center;gap:12px;font-size:14px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.3);z-index:200;transition:transform .3s ease;-webkit-tap-highlight-color:transparent}
+.update-banner.ub-visible{transform:translateX(-50%) translateY(0)}
+.update-banner button{background:var(--success);color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:13px;font-weight:700;cursor:pointer}
 /* Reminder button on cards */
 .btn-reminder{display:inline-flex;align-items:center;gap:4px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--muted);font-size:12px;cursor:pointer;-webkit-tap-highlight-color:transparent;margin-bottom:8px}
 .btn-reminder:hover{border-color:var(--muted);color:var(--text)}
@@ -234,6 +238,8 @@ body.bedside .recovery-note,body.bedside .warnings{display:none}
 .card:active{transform:scale(.985)}
 .timer-fill,.nuc-timer-fill,.tylenol-fill{transition:width 1s linear}
 .btn-log,.btn-log-next{transition:opacity .2s,transform .1s,background .2s}
+*:focus-visible{outline:2px solid var(--success);outline-offset:2px;border-radius:4px}
+body.bedside *:focus-visible{outline-color:#ffeaa7}
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:0.01ms!important;animation-iteration-count:1!important;transition-duration:0.01ms!important}
 }
@@ -320,12 +326,16 @@ if ('serviceWorker' in navigator) {
       if (document.visibilityState === 'visible') reg.update().catch(() => {});
     });
   }).catch(() => {});
-  // When a new SW takes control, reload to get the fresh version
+  // When a new SW takes control, show non-intrusive update toast (don't force-reload mid-action)
   let refreshing = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (refreshing) return;
     refreshing = true;
-    window.location.reload();
+    const banner = document.createElement('div');
+    banner.className = 'update-banner';
+    banner.innerHTML = '<span>Update available</span><button onclick="window.location.reload()">Refresh</button>';
+    document.body.appendChild(banner);
+    setTimeout(() => banner.classList.add('ub-visible'), 100);
   });
 }
 
@@ -351,18 +361,46 @@ const MEDS = [
     warns:[], category:'stool-softener', maxDoses:2 }
 ];
 const STORAGE_KEY = 'amanda-meds-v1';
+const CURRENT_SCHEMA = 1;
+// CSS variable string for inline styles — browser resolves at render time, no getComputedStyle needed
+const _cssSuccess = 'var(--success)';
 let state = loadState();
 
 function loadState() {
   try {
     const s = localStorage.getItem(STORAGE_KEY);
-    if (s) return JSON.parse(s);
-  } catch(e) {}
-  return seedState();
+    if (s) {
+      let parsed = JSON.parse(s);
+      parsed = migrateState(parsed);
+      if (validateState(parsed)) { save_raw(parsed); return parsed; }
+      console.warn('Invalid state in localStorage, resetting to seed data');
+    }
+  } catch(e) { console.warn('Failed to load state:', e); }
+  const seed = seedState();
+  save_raw(seed);
+  return seed;
+}
+function migrateState(s) {
+  // v0 (no schema field) → v1: add schema version
+  if (!s.schema) { s.schema = 1; }
+  // Future migrations go here as chained if-blocks:
+  // if (s.schema === 1) { /* migrate v1→v2 */; s.schema = 2; }
+  return s;
+}
+function validateState(s) {
+  if (!s || !Array.isArray(s.doses) || typeof s.nextId !== 'number') return false;
+  const validMedIds = new Set(MEDS.map(m => m.id));
+  return s.doses.every(d =>
+    typeof d.id === 'number' &&
+    validMedIds.has(d.medId) &&
+    typeof d.time === 'string' && !isNaN(new Date(d.time).getTime()) &&
+    typeof d.tabs === 'number' && d.tabs > 0 &&
+    typeof d.mg === 'number' && d.mg >= 0
+  );
 }
 function seedState() {
   const d = SURGERY_DATE;
-  return { doses:[
+  return { schema:CURRENT_SCHEMA, doses:[
     {id:1,medId:'oxycodone',time:d+'T09:30:00',tabs:1,mg:5},
     {id:2,medId:'oxycodone',time:d+'T12:00:00',tabs:1,mg:5},
     {id:3,medId:'hydroxyzine',time:d+'T12:00:00',tabs:1,mg:25},
@@ -371,7 +409,8 @@ function seedState() {
     {id:6,medId:'tylenol',time:d+'T12:00:00',tabs:2,mg:1000}
   ], nextId:7 };
 }
-function save() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e) { console.error('save failed (storage full?):', e); } }
+function save() { save_raw(state); }
+function save_raw(s) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch(e) { console.error('save failed (storage full?):', e); } }
 
 function getMed(id) { return MEDS.find(m=>m.id===id); }
 function now() { return new Date(); }
@@ -621,7 +660,7 @@ function renderTylenolMeter() {
   const amtEl=document.getElementById('tyl-amount');
   amtEl.textContent=amt;
   el.style.width=pct+'%';
-  if(amt<=2000){el.style.background=getComputedStyle(document.documentElement).getPropertyValue('--success');amtEl.style.color='var(--success)';}
+  if(amt<=2000){el.style.background=_cssSuccess;amtEl.style.color='var(--success)';}
   else if(amt<=3000){el.style.background='#f39c12';amtEl.style.color='#f39c12';}
   else{el.style.background='var(--danger-border)';amtEl.style.color='var(--danger-border)';}
 }
@@ -657,7 +696,7 @@ function renderCards() {
         <div class="card-dose">${med.dose} &mdash; ${med.freq}</div>
         <div class="card-status"><span class="dot ${statusDot}"></span>${statusText}</div>
         <div class="card-timer">${last?`Last: ${fmt(last.time,'time')} (${minsToHM(ago)} ago)`:'No doses logged yet'}</div>
-        <div class="timer-bar"><div class="timer-fill" style="width:${pct}%;background:${available?getComputedStyle(document.documentElement).getPropertyValue('--success'):med.color}"></div></div>
+        <div class="timer-bar"><div class="timer-fill" style="width:${pct}%;background:${available?_cssSuccess:med.color}"></div></div>
         ${med.maxDoses ? `<div class="completion-dots">${Array.from({length:med.maxDoses},(_,i)=>`<span class="cd-dot" style="border-color:${med.color};${i<todayCount.length?'background:'+med.color:''}"></span>`).join('')}<span class="cd-label">${todayCount.length >= med.maxDoses ? 'All done!' : todayCount.length === 0 ? '0 of '+med.maxDoses+' today' : todayCount.length+' of '+med.maxDoses+' — '+(med.maxDoses-todayCount.length)+' to go'}</span></div>` : `<div class="card-today">Today: ${todayCount.length} dose${todayCount.length!==1?'s':''}${todayMg?' ('+todayMg+'mg)':''}</div>`}
         ${warnsHtml}
         <button class="btn-reminder" onclick="event.stopPropagation();downloadReminder('${med.id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="7"/><path d="M12 9v4l2.5 1.5"/><path d="M5 3L2 6M22 6l-3-3"/></svg>Set Reminder</button>
@@ -690,7 +729,7 @@ function renderLog() {
         <div><strong>${med?med.name:d.medId}</strong> &mdash; ${tabLabel}${mgLabel}</div>
         ${tylNote}
       </div>
-      <button class="log-remove" onclick="handleRemove(${d.id})" title="Remove this entry">&times;</button>
+      <button class="log-remove" onclick="handleRemove(${d.id})" title="Remove this entry" aria-label="Remove ${med?med.name:d.medId} dose at ${fmt(d.time,'time')}">&times;</button>
     </div>`;
   };
   // Show last 3 as preview (always visible)
@@ -1030,9 +1069,10 @@ function handleExport() {
 function handleClear() {
   showModal(`<h3>Clear all data?</h3>
     <p>This will remove all logged doses. This cannot be undone.</p>
-    <div class="modal-actions">
-      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+    <div class="modal-actions" style="flex-direction:column;gap:8px">
+      <button class="btn-confirm" onclick="handleExport();closeModal()">Export Log First</button>
       <button class="btn-danger" onclick="localStorage.removeItem('${STORAGE_KEY}');state=seedState();save();render();closeModal()">Clear Everything</button>
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
     </div>`);
 }
 
@@ -1045,6 +1085,7 @@ let warningsCollapsed = false;
 let logCollapsed = false;
 let nqiSectionCollapsed = false;
 let nqiExpandedMedId = null;
+let _nqiTick = 0;
 
 function toggleWarnings() {
   warningsCollapsed = !warningsCollapsed;
@@ -1147,7 +1188,7 @@ setInterval(()=>{
   try{renderClock();}catch(e){}
   try{renderDayCounter();}catch(e){}
   try{renderTylenolMeter();}catch(e){}
-  try{renderNextUp();}catch(e){}
+  if(++_nqiTick % 10 === 0){try{renderNextUp();}catch(e){}}
   // Update status text on cards without full re-render
   try{
     document.querySelectorAll('.card').forEach((card,i)=>{
@@ -1167,7 +1208,7 @@ setInterval(()=>{
         statusEl.innerHTML=`<span class="dot ${dot}"></span>${txt}`;
       }
       if(timerEl) timerEl.textContent=`Last: ${fmt(last.time,'time')} (${minsToHM(ago)} ago)`;
-      if(fillEl){fillEl.style.width=pct+'%';fillEl.style.background=available?getComputedStyle(document.documentElement).getPropertyValue('--success'):med.color;}
+      if(fillEl){fillEl.style.width=pct+'%';fillEl.style.background=available?_cssSuccess:med.color;}
     });
   }catch(e){}
 },1000);
