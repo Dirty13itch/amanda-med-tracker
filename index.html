@@ -561,6 +561,7 @@ function save() { save_raw(state); }
 function save_raw(s) { try { localStorage.setItem(DOSES_KEY, JSON.stringify(s)); } catch(e) { console.error('save failed (storage full?):', e); } }
 
 function getMed(id) { return MEDS.find(m=>m.id===id); }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function now() { return new Date(); }
 function todayStr() { return fmt(now(),'date'); }
 function fmt(d,type) {
@@ -1069,6 +1070,7 @@ function downloadReminder(medId) {
   const ics = [
     'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//MedTracker//EN',
     'BEGIN:VEVENT',
+    'UID:' + Date.now() + '-' + medId + '@medtracker',
     'DTSTART:' + icsDate(nextTime),
     'DTEND:' + icsDate(end),
     'SUMMARY:Take ' + med.name + (med.brand ? ' (' + med.brand + ')' : ''),
@@ -1422,10 +1424,10 @@ function renderSettingsPanel() {
   let html = `<div class="settings-header"><h2>Settings</h2><button class="settings-close" onclick="closeSettings()">&times;</button></div>`;
   // Profile section
   html += `<div class="settings-section"><h3>Profile</h3>
-    <div class="settings-field"><label>Your Name</label><input type="text" id="cfg-name" value="${CONFIG.patientName||''}" placeholder="Leave blank for generic" onchange="updateConfigField('patientName',this.value)"><div class="hint">Shown in header and exports</div></div>
+    <div class="settings-field"><label>Your Name</label><input type="text" id="cfg-name" value="${esc(CONFIG.patientName)}" placeholder="Leave blank for generic" onchange="updateConfigField('patientName',this.value)"><div class="hint">Shown in header and exports</div></div>
     <div class="med-form-row">
       <div class="settings-field"><label>Event Date</label><input type="date" id="cfg-event-date" value="${CONFIG.eventDate||''}" onchange="updateConfigField('eventDate',this.value||null)"></div>
-      <div class="settings-field"><label>Event Label</label><input type="text" id="cfg-event-label" value="${CONFIG.eventLabel||''}" placeholder="e.g. Surgery" onchange="updateConfigField('eventLabel',this.value)"></div>
+      <div class="settings-field"><label>Event Label</label><input type="text" id="cfg-event-label" value="${esc(CONFIG.eventLabel)}" placeholder="e.g. Surgery" onchange="updateConfigField('eventLabel',this.value)"></div>
     </div>
   </div>`;
   // Medications section
@@ -1469,12 +1471,12 @@ function renderSettingsPanel() {
 function renderMedForm(med) {
   const isNew = !med;
   const m = med || { id:'', name:'', brand:'', dose:'', perTab:0, maxTabs:1, purpose:'', freq:'', intervalMin:240, color:nextColor(), bgBadge:'#f0f0f0', scheduled:false, warns:[], category:'' };
-  const colorOptions = ['#e74c3c','#e84393','#8e44ad','#2980b9','#27ae60','#e67e22','#00b894','#fd79a8','#636e72','#00cec9'];
+  const colorOptions = COLOR_PALETTE;
   return `<div class="med-form"><h3>${isNew?'Add':'Edit'} Medication</h3>
-    <div class="settings-field"><label>Name *</label><input type="text" id="mf-name" value="${m.name}" placeholder="e.g. Ibuprofen"></div>
+    <div class="settings-field"><label>Name *</label><input type="text" id="mf-name" value="${esc(m.name)}" placeholder="e.g. Ibuprofen"></div>
     <div class="med-form-row">
-      <div class="settings-field"><label>Brand</label><input type="text" id="mf-brand" value="${m.brand||''}" placeholder="e.g. Advil"></div>
-      <div class="settings-field"><label>Dose Description</label><input type="text" id="mf-dose" value="${m.dose}" placeholder="e.g. 200mg tabs"></div>
+      <div class="settings-field"><label>Brand</label><input type="text" id="mf-brand" value="${esc(m.brand)}" placeholder="e.g. Advil"></div>
+      <div class="settings-field"><label>Dose Description</label><input type="text" id="mf-dose" value="${esc(m.dose)}" placeholder="e.g. 200mg tabs"></div>
     </div>
     <div class="med-form-row">
       <div class="settings-field"><label>Mg per Tablet</label><input type="number" id="mf-perTab" value="${m.perTab}" min="0"></div>
@@ -1485,9 +1487,9 @@ function renderMedForm(med) {
         <select id="mf-interval" onchange="toggleCustomInterval()"><option value="120"${m.intervalMin===120?' selected':''}>Every 2 hours</option><option value="240"${m.intervalMin===240?' selected':''}>Every 4 hours</option><option value="360"${m.intervalMin===360?' selected':''}>Every 6 hours</option><option value="480"${m.intervalMin===480?' selected':''}>Every 8 hours</option><option value="720"${m.intervalMin===720?' selected':''}>Every 12 hours</option><option value="1440"${m.intervalMin===1440?' selected':''}>Once daily</option><option value="custom"${![120,240,360,480,720,1440].includes(m.intervalMin)?' selected':''}>Custom</option></select>
         <input type="number" id="mf-customInterval" min="1" placeholder="Minutes" value="${![120,240,360,480,720,1440].includes(m.intervalMin)?m.intervalMin:''}" style="margin-top:4px;${[120,240,360,480,720,1440].includes(m.intervalMin)?'display:none':''}">
       </div>
-      <div class="settings-field"><label>Purpose</label><input type="text" id="mf-purpose" value="${m.purpose}" placeholder="e.g. Pain Relief"></div>
+      <div class="settings-field"><label>Purpose</label><input type="text" id="mf-purpose" value="${esc(m.purpose)}" placeholder="e.g. Pain Relief"></div>
     </div>
-    <div class="settings-field"><label>Frequency Description</label><input type="text" id="mf-freq" value="${m.freq}" placeholder="e.g. 1-2 tabs every 4 hours"></div>
+    <div class="settings-field"><label>Frequency Description</label><input type="text" id="mf-freq" value="${esc(m.freq)}" placeholder="e.g. 1-2 tabs every 4 hours"></div>
     <div class="settings-field"><label>Color</label><div class="color-swatches">${colorOptions.map(c=>`<div class="color-swatch${resolveColor(m.color)===c?' active':''}" style="background:${c}" onclick="selectMedColor(this,'${c}')"></div>`).join('')}</div></div>
     <button class="advanced-toggle" onclick="toggleAdvanced()"><span class="chevron" id="adv-chevron">&#9654;</span> Advanced Options</button>
     <div class="advanced-content" id="adv-content">
@@ -1500,12 +1502,12 @@ function renderMedForm(med) {
         <div class="settings-field"><label>Daily Max (mg)</label><input type="number" id="mf-maxDaily" value="${m.maxDaily||0}" min="0" placeholder="e.g. 4000"></div>
       </div>
       <div class="med-form-row">
-        <div class="settings-field"><label>Paired With</label><select id="mf-pairedWith"><option value="">None</option>${MEDS.filter(x=>x.id!==m.id).map(x=>`<option value="${x.id}"${m.pairedWith===x.id?' selected':''}>${x.name}</option>`).join('')}</select></div>
-        <div class="settings-field"><label>Conflicts With</label><select id="mf-conflictsWith"><option value="">None</option>${MEDS.filter(x=>x.id!==m.id).map(x=>`<option value="${x.id}"${m.conflictsWith===x.id?' selected':''}>${x.name}</option>`).join('')}</select></div>
+        <div class="settings-field"><label>Paired With</label><select id="mf-pairedWith"><option value="">None</option>${MEDS.filter(x=>x.id!==m.id).map(x=>`<option value="${esc(x.id)}"${m.pairedWith===x.id?' selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
+        <div class="settings-field"><label>Conflicts With</label><select id="mf-conflictsWith"><option value="">None</option>${MEDS.filter(x=>x.id!==m.id).map(x=>`<option value="${esc(x.id)}"${m.conflictsWith===x.id?' selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
       </div>
       <div class="settings-field"><label>Conflict Wait (minutes)</label><input type="number" id="mf-conflictMin" value="${m.conflictMin||60}" min="0"></div>
-      <div class="settings-field"><label>Warnings (one per line)</label><textarea id="mf-warns" placeholder="e.g. Do not exceed 4000mg in 24 hours">${(m.warns||[]).join('\n')}</textarea></div>
-      <div class="settings-field"><label>Category</label><input type="text" id="mf-category" value="${m.category||''}" placeholder="e.g. analgesic"></div>
+      <div class="settings-field"><label>Warnings (one per line)</label><textarea id="mf-warns" placeholder="e.g. Do not exceed 4000mg in 24 hours">${esc((m.warns||[]).join('\n'))}</textarea></div>
+      <div class="settings-field"><label>Category</label><input type="text" id="mf-category" value="${esc(m.category)}" placeholder="e.g. analgesic"></div>
     </div>
     <div class="med-form-actions">
       <button class="btn-cancel" onclick="cancelMedForm()">Cancel</button>
