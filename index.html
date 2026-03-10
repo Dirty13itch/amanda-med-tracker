@@ -84,6 +84,7 @@ main{max-width:800px;margin:0 auto;padding:12px}
 .actions{display:flex;gap:8px;justify-content:center;padding:12px 0 32px}
 .actions button{padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--muted);font-size:13px;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .actions button:hover{border-color:var(--muted)}
+.app-version{text-align:center;font-size:11px;color:var(--muted);opacity:.5;padding:4px 0 8px}
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:flex;align-items:flex-end;justify-content:center;padding:0;opacity:1;transition:opacity .25s ease}
 .modal-overlay.hidden{display:none;opacity:0}
 .modal{background:var(--card);border-radius:20px 20px 0 0;padding:24px;padding-bottom:calc(24px + env(safe-area-inset-bottom,0px));max-width:500px;width:100%;box-shadow:0 -4px 32px rgba(0,0,0,.25);transform:translateY(0);transition:transform .3s cubic-bezier(.4,0,.2,1)}
@@ -303,6 +304,7 @@ body.bedside *:focus-visible{outline-color:#ffeaa7}
     <button onclick="handleExport()">Export Log</button>
     <button onclick="handleClear()">Clear All Data</button>
   </div>
+  <div class="app-version" id="app-version"></div>
 </main>
 <div class="alert-banner" id="alert-banner" role="alert" aria-live="assertive">
   <div class="ab-text" id="ab-text"></div>
@@ -340,6 +342,7 @@ if ('serviceWorker' in navigator) {
 }
 
 const SURGERY_DATE = '2026-03-09';
+const APP_VERSION = '20260310-1413';
 const MEDS = [
   { id:'oxycodone', name:'Oxycodone', brand:'', dose:'5mg', perTab:5, maxTabs:2, purpose:'Pain Relief',
     freq:'1-2 tabs every 4 hrs as needed', intervalMin:240, color:'var(--oxy)', bgBadge:'#fde8e8', scheduled:false,
@@ -644,6 +647,7 @@ function render() {
   try{renderNextUp();}catch(e){console.error('renderNextUp:',e);}
   try{renderCards();}catch(e){console.error('renderCards:',e);}
   try{renderLog();}catch(e){console.error('renderLog:',e);}
+  try{document.getElementById('app-version').textContent='v '+APP_VERSION;}catch(e){}
 }
 
 function renderClock() {

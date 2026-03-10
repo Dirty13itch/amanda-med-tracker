@@ -1,0 +1,17 @@
+#!/bin/sh
+# Auto-stamp APP_VERSION in index.html and CACHE_NAME in sw.js
+# Setup: git config core.hooksPath .githooks
+
+STAMP=$(date -u +"%Y%m%d-%H%M")
+
+# Stamp APP_VERSION in index.html (will show commit hash after commit via post-commit)
+if git diff --cached --name-only | grep -q 'index.html'; then
+  sed -i "s/const APP_VERSION = .*/const APP_VERSION = '${STAMP}';/" index.html
+  git add index.html
+fi
+
+# Bump CACHE_NAME in sw.js so the service worker cache busts on deploy
+if git diff --cached --name-only | grep -qE 'index.html|sw.js'; then
+  sed -i "s/const CACHE_NAME = .*/const CACHE_NAME = 'amanda-meds-${STAMP}';/" sw.js
+  git add sw.js
+fi

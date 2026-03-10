@@ -1,4 +1,4 @@
-const CACHE_NAME = 'amanda-meds-v11';
+const CACHE_NAME = 'amanda-meds-20260310-1413';
 const ASSETS = [
   '/',
   '/index.html',
