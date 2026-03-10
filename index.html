@@ -573,7 +573,7 @@ function fmt(d,type) {
 function minAgo(isoStr) { return (now()-new Date(isoStr))/60000; }
 function minsToHM(m) {
   if(m<=0) return 'now';
-  const h=Math.floor(m/60), mi=Math.round(m%60);
+  const h=Math.floor(m/60), mi=Math.floor(m%60);
   return h>0 ? `${h}h ${mi}m` : `${mi}m`;
 }
 
@@ -711,7 +711,7 @@ function renderNextUp() {
   const rest = queue.slice(1, 4);
   // If nothing available for 2+ hours, show a calm message
   if (!primary.isAvailable && primary.minutesUntil > 120) {
-    container.innerHTML = `<div class="next-up-clear"><div class="nuc-calm">All clear — you're on track</div><div class="nuc-detail">Next up: ${primary.med.name} in ${minsToHM(primary.minutesUntil)}. Relax until then.</div></div>`;
+    container.innerHTML = `<div class="next-up-clear"><div class="nuc-calm">All clear — you're on track</div><div class="nuc-detail">Next up: ${esc(primary.med.name)} in ${minsToHM(primary.minutesUntil)}. Relax until then.</div></div>`;
     return;
   }
   const cardClass = primary.isOverdue ? 'nuc-overdue' : primary.isAvailable ? 'nuc-available' : '';
@@ -733,12 +733,12 @@ function renderNextUp() {
     <div class="next-up-card ${cardClass}">
       <div class="nuc-header">
         <div>
-          <div class="nuc-name" style="color:${primary.med.color}">${primary.med.name}</div>
-          ${primary.med.brand ? `<div class="nuc-brand">${primary.med.brand}</div>` : ''}
+          <div class="nuc-name" style="color:${primary.med.color}">${esc(primary.med.name)}</div>
+          ${primary.med.brand ? `<div class="nuc-brand">${esc(primary.med.brand)}</div>` : ''}
         </div>
-        <div class="card-badge" style="background:${primary.med.bgBadge};color:${primary.med.color}">${primary.med.purpose}</div>
+        <div class="card-badge" style="background:${primary.med.bgBadge};color:${primary.med.color}">${esc(primary.med.purpose)}</div>
       </div>
-      <div class="nuc-dose">${primary.med.dose} &mdash; ${primary.med.freq}</div>
+      <div class="nuc-dose">${esc(primary.med.dose)} &mdash; ${esc(primary.med.freq)}</div>
       <div class="nuc-status"><span class="dot ${dotClass}"></span>${statusText}</div>
       <div class="nuc-timer-bar"><div class="nuc-timer-fill" style="width:${primary.pct}%;background:${fillColor}"></div></div>
       ${!canLog ? `<button class="btn-reminder" onclick="event.stopPropagation();downloadReminder('${primary.med.id}')" style="margin-bottom:12px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="7"/><path d="M12 9v4l2.5 1.5"/><path d="M5 3L2 6M22 6l-3-3"/></svg>Set phone alarm for when it\u2019s due</button>` : ''}
@@ -766,13 +766,13 @@ function renderNextUp() {
       // Queue row (tappable)
       html += `<div class="nqi" onclick="toggleNqiItem('${item.med.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleNqiItem('${item.med.id}')}" role="button" tabindex="0" aria-expanded="${isExp}">
         <div class="nqi-dot" style="background:${item.med.color}"></div>
-        <div class="nqi-name">${item.med.name}</div>
+        <div class="nqi-name">${esc(item.med.name)}</div>
         <div class="nqi-time">${t}</div>
         <span class="nqi-chevron ${isExp ? 'open' : ''}">▼</span>
       </div>`;
       // Expanded detail panel
       html += `<div class="nqi-detail ${isExp ? 'open' : ''}">
-        <div class="nqi-detail-dose">${item.med.dose} — ${item.med.freq}</div>
+        <div class="nqi-detail-dose">${esc(item.med.dose)} — ${esc(item.med.freq)}</div>
         <div class="nqi-detail-status"><span class="dot ${dotCls}"></span>${canLog ? (item.isOverdue ? 'Overdue' : 'Available now') : 'Available in ' + minsToHM(item.minutesUntil)}</div>
         <button class="nqi-btn-log" style="background:${item.med.color}" onclick="event.stopPropagation();handleLog('${item.med.id}')" ${canLog ? '' : 'disabled'}>
           ${canLog ? 'Log Dose' : 'Not yet available'}
@@ -817,7 +817,7 @@ function renderTrackedTotals() {
     const id='tt-'+med.id;
     return `<div class="tracked-total-section">
       <div class="tracked-total-header">
-        <h3>${med.name} (rolling 24hrs)</h3>
+        <h3>${esc(med.name)} (rolling 24hrs)</h3>
         <div><span class="tracked-total-amount" id="${id}-amount">${amt}</span><span style="font-size:14px;color:var(--muted)">mg / ${med.maxDaily}mg</span></div>
       </div>
       <div class="tracked-total-bar"><div class="tracked-total-fill" id="${id}-fill" style="width:${pct}%;background:${amt<=med.maxDaily*0.5?_cssSuccess:amt<=med.maxDaily*0.75?'#f39c12':'var(--danger-border)'}"></div></div>
@@ -838,7 +838,7 @@ function renderWarnings() {
   const container=document.getElementById('warnings-content');
   if(!container) return;
   // Static warnings from WARNINGS array
-  let html=WARNINGS.map(w=>`<div class="alert alert-${w.type}"><strong>${w.title}</strong>${w.text}</div>`).join('');
+  let html=WARNINGS.map(w=>`<div class="alert alert-${w.type}"><strong>${esc(w.title)}</strong>${esc(w.text)}</div>`).join('');
   // Auto-generate conflict warnings from med config
   MEDS.filter(m=>m.conflictsWith).forEach(med=>{
     const other=getMed(med.conflictsWith);
@@ -850,7 +850,7 @@ function renderWarnings() {
       return matchMed&&matchOther;
     });
     if(!existsAlready) {
-      html+=`<div class="alert alert-warn"><strong>${other.name} + ${med.name} Separation</strong>Must wait at least ${med.conflictMin} minutes between these two medications</div>`;
+      html+=`<div class="alert alert-warn"><strong>${esc(other.name)} + ${esc(med.name)} Separation</strong>Must wait at least ${med.conflictMin} minutes between these two medications</div>`;
     }
   });
   container.innerHTML=html;
@@ -881,18 +881,18 @@ function renderCards() {
     if(atMax){statusDot='red';statusText=`${todayCount.length}/${med.maxDoses} doses today (complete)`;}
     if(atDailyLimit){statusDot='red';statusText=`24hr limit reached (${med.maxDaily}mg)`;}
     const disabled=atDailyLimit||atMax;
-    const warnsHtml=(med.warns||[]).map(w=>`<div class="card-warn">${w}</div>`).join('');
-    return `<div class="card" role="listitem" aria-label="${med.name} medication card">
+    const warnsHtml=(med.warns||[]).map(w=>`<div class="card-warn">${esc(w)}</div>`).join('');
+    return `<div class="card" role="listitem" aria-label="${esc(med.name)} medication card">
       <div class="card-accent" style="background:${med.color}"></div>
       <div class="card-body">
         <div class="card-top">
           <div>
-            <div class="card-name" style="color:${med.color}">${med.name}</div>
-            ${med.brand?`<div class="card-brand">${med.brand}</div>`:''}
+            <div class="card-name" style="color:${med.color}">${esc(med.name)}</div>
+            ${med.brand?`<div class="card-brand">${esc(med.brand)}</div>`:''}
           </div>
-          <div class="card-badge" style="background:${med.bgBadge};color:${med.color}">${med.purpose}</div>
+          <div class="card-badge" style="background:${med.bgBadge};color:${med.color}">${esc(med.purpose)}</div>
         </div>
-        <div class="card-dose">${med.dose} &mdash; ${med.freq}</div>
+        <div class="card-dose">${esc(med.dose)} &mdash; ${esc(med.freq)}</div>
         <div class="card-status"><span class="dot ${statusDot}"></span>${statusText}</div>
         <div class="card-timer">${last?`Last: ${fmt(last.time,'time')} (${minsToHM(ago)} ago)`:'No doses logged yet'}</div>
         <div class="timer-bar"><div class="timer-fill" style="width:${pct}%;background:${available?_cssSuccess:med.color}"></div></div>
@@ -933,10 +933,10 @@ function renderLog() {
       <div class="log-time">${fmt(d.time,'time')}</div>
       <div class="log-dot" style="background:${med?med.color:'#999'}"></div>
       <div class="log-detail">
-        <div><strong>${med?med.name:d.medId}</strong> &mdash; ${tabLabel}${mgLabel}</div>
+        <div><strong>${esc(med?med.name:d.medId)}</strong> &mdash; ${tabLabel}${mgLabel}</div>
         ${trackedNote}
       </div>
-      <button class="log-remove" onclick="handleRemove(${d.id})" title="Remove this entry" aria-label="Remove ${med?med.name:d.medId} dose at ${fmt(d.time,'time')}">&times;</button>
+      <button class="log-remove" onclick="handleRemove(${d.id})" title="Remove this entry" aria-label="Remove ${esc(med?med.name:d.medId)} dose at ${fmt(d.time,'time')}">&times;</button>
     </div>`;
   };
   // Show last 3 as preview (always visible)
@@ -1144,8 +1144,8 @@ function handleLog(medId) {
     if(ago!==null&&ago<med.intervalMin){
       earlyWarn=`<p style="color:var(--warn-border)">Last dose was ${minsToHM(ago)} ago. Minimum interval is ${minsToHM(med.intervalMin)}.</p>`;
     }
-    showModal(`<h3>Log ${med.name}${med.brand?' ('+med.brand+')':''}</h3>
-      <p>${med.dose}</p>${earlyWarn}
+    showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''}</h3>
+      <p>${esc(med.dose)}</p>${earlyWarn}
       ${renderTimeSelector()}
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeModal()">Cancel</button>
@@ -1160,7 +1160,7 @@ function showMultiTabModal(med) {
   let earlyWarn='';
   if(ago!==null&&ago<med.intervalMin){
     const intervalLabel=med.intervalMin>=60?Math.round(med.intervalMin/60)+' hours':med.intervalMin+' minutes';
-    earlyWarn=`<div class="warn-box">Last ${med.name} was ${minsToHM(ago)} ago. Recommended interval: ${intervalLabel}. Available in ${minsToHM(med.intervalMin-ago)}.</div>`;
+    earlyWarn=`<div class="warn-box">Last ${esc(med.name)} was ${minsToHM(ago)} ago. Recommended interval: ${intervalLabel}. Available in ${minsToHM(med.intervalMin-ago)}.</div>`;
   }
   // Build tab buttons dynamically from med.maxTabs
   let tabsHtml='';
@@ -1177,11 +1177,11 @@ function showMultiTabModal(med) {
   const paired=findPairedMeds(med.id);
   let pairedHtml='';
   paired.forEach(pm=>{
-    pairedHtml+=`<label class="modal-check"><input type="checkbox" data-paired-med="${pm.id}" checked> Also give ${pm.name}${pm.brand?' ('+pm.brand+')':''} ${pm.dose} for ${pm.purpose.toLowerCase()}</label>`;
+    pairedHtml+=`<label class="modal-check"><input type="checkbox" data-paired-med="${pm.id}" checked> Also give ${esc(pm.name)}${pm.brand?' ('+esc(pm.brand)+')':''} ${esc(pm.dose)} for ${esc(pm.purpose.toLowerCase())}</label>`;
   });
   window._modalMedId=med.id;
   window._modalTabVal=1;
-  showModal(`<h3>Log ${med.name}</h3>${earlyWarn}
+  showModal(`<h3>Log ${esc(med.name)}</h3>${earlyWarn}
     ${tabsHtml}${pairedHtml}
     ${renderTimeSelector()}
     <div class="modal-actions">
@@ -1207,7 +1207,7 @@ function showTrackedModal(med) {
   const intervalLabel=med.intervalMin>=60?Math.round(med.intervalMin/60)+' hours':med.intervalMin+' minutes';
   let earlyWarn='';
   if(ago!==null&&ago<med.intervalMin){
-    earlyWarn=`<div class="warn-box">Last ${med.name} was ${minsToHM(ago)} ago. Recommended interval: ${intervalLabel}.</div>`;
+    earlyWarn=`<div class="warn-box">Last ${esc(med.name)} was ${minsToHM(ago)} ago. Recommended interval: ${intervalLabel}.</div>`;
   }
   // Build tab buttons with projected totals
   let tabsHtml='<p style="font-weight:600;margin-bottom:6px">How many tablets?</p><div class="modal-tabs" id="modal-tab-group">';
@@ -1226,7 +1226,7 @@ function showTrackedModal(med) {
   const exceedWarn=maxTabMg>med.maxDaily?`<div class="warn-box">Taking ${med.maxTabs} tablets would exceed the ${med.maxDaily}mg daily maximum!</div>`:'';
   window._modalMedId=med.id;
   window._modalTabVal=defaultTabs;
-  showModal(`<h3>Log ${med.name}${med.brand?' ('+med.brand+')':''}</h3>${earlyWarn}
+  showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''}</h3>${earlyWarn}
     ${tabsHtml}
     ${exceedWarn}
     <p style="font-size:13px;color:var(--muted)">24hr total so far: ${current}mg / ${med.maxDaily}mg</p>
@@ -1243,7 +1243,7 @@ function confirmTracked() {
 
 function showConflictModal(med) {
   const conflictMed=getMed(med.conflictsWith);
-  const conflictName=conflictMed?conflictMed.name:med.conflictsWith;
+  const conflictName=esc(conflictMed?conflictMed.name:med.conflictsWith);
   const lastConflict=lastDose(med.conflictsWith);
   const conflictAgo=lastConflict?minAgo(lastConflict.time):null;
   const lastSelf=lastDose(med.id);
@@ -1253,18 +1253,18 @@ function showConflictModal(med) {
   let conflictWarn='';
   if(conflictAgo!==null&&conflictAgo<med.conflictMin){
     const wait=Math.ceil(med.conflictMin-conflictAgo);
-    conflictWarn=`<div class="warn-box"><strong>WARNING:</strong> ${conflictName} was taken ${minsToHM(conflictAgo)} ago. You should wait at least ${conflictMinLabel} between ${conflictName} and ${med.name}. Recommend waiting ${wait} more minutes.</div>`;
+    conflictWarn=`<div class="warn-box"><strong>WARNING:</strong> ${conflictName} was taken ${minsToHM(conflictAgo)} ago. You should wait at least ${conflictMinLabel} between ${conflictName} and ${esc(med.name)}. Recommend waiting ${wait} more minutes.</div>`;
   }
   let earlyWarn='';
   if(selfAgo!==null&&selfAgo<med.intervalMin){
-    earlyWarn=`<div class="warn-box">Last ${med.name} was ${minsToHM(selfAgo)} ago. Recommended interval: ${intervalLabel}. Available in ${minsToHM(med.intervalMin-selfAgo)}.</div>`;
+    earlyWarn=`<div class="warn-box">Last ${esc(med.name)} was ${minsToHM(selfAgo)} ago. Recommended interval: ${intervalLabel}. Available in ${minsToHM(med.intervalMin-selfAgo)}.</div>`;
   }
   const inConflict=conflictAgo!==null&&conflictAgo<med.conflictMin;
   const confirmBtn=inConflict
     ?`<button class="btn-danger" onclick="addDose('${med.id}',1);closeModal()">Log Anyway</button>`
     :`<button class="btn-confirm" onclick="addDose('${med.id}',1);closeModal()">Log Dose</button>`;
-  showModal(`<h3>Log ${med.name}${med.brand?' ('+med.brand+')':''} ${med.dose}</h3>${conflictWarn}${earlyWarn}
-    <p>${med.purpose} &mdash; 1 tablet</p>
+  showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''} ${esc(med.dose)}</h3>${conflictWarn}${earlyWarn}
+    <p>${esc(med.purpose)} &mdash; 1 tablet</p>
     ${renderTimeSelector()}
     <div class="modal-actions" style="margin-top:14px">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
@@ -1283,7 +1283,7 @@ function handleRemove(id) {
   if(!d) return;
   const med=getMed(d.medId);
   showModal(`<h3>Remove dose?</h3>
-    <p>Remove ${med?med.name:d.medId} (${fmt(d.time,'time')}) from the log?</p>
+    <p>Remove ${esc(med?med.name:d.medId)} (${fmt(d.time,'time')}) from the log?</p>
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal()">Keep</button>
       <button class="btn-danger" onclick="removeDose(${id});closeModal()">Remove</button>
@@ -1384,7 +1384,7 @@ function renderRecoveryNote() {
   let html = '';
   for(const note of RECOVERY_NOTES){
     if(day>=note.minDay&&day<=note.maxDay){
-      html='<div class="recovery-note '+note.noteType+'">'+note.text(day)+'</div>';
+      html='<div class="recovery-note '+note.noteType+'">'+esc(note.text(day))+'</div>';
       break;
     }
   }
@@ -1436,7 +1436,7 @@ function renderSettingsPanel() {
     MEDS.forEach((med, i) => {
       html += `<div class="med-list-item" onclick="editMed(${i})">
         <div class="med-list-swatch" style="background:${med.color}"></div>
-        <div class="med-list-info"><div class="med-list-name">${med.name}${med.brand?' ('+med.brand+')':''}</div><div class="med-list-dose">${med.dose} — ${med.freq}</div></div>
+        <div class="med-list-info"><div class="med-list-name">${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''}</div><div class="med-list-dose">${esc(med.dose)} — ${esc(med.freq)}</div></div>
         <div class="med-list-actions"><button onclick="event.stopPropagation();editMed(${i})" title="Edit">✏️</button><button onclick="event.stopPropagation();deleteMed(${i})" title="Delete">🗑️</button></div>
       </div>`;
     });
@@ -1453,7 +1453,7 @@ function renderSettingsPanel() {
   // Warnings section
   html += `<div class="settings-section"><h3>Warnings</h3>`;
   CONFIG.warnings.forEach((w,i)=>{
-    html+=`<div class="med-list-item"><div style="flex:1"><strong>${w.title}</strong><div style="font-size:13px;color:var(--muted)">${w.text}</div></div>
+    html+=`<div class="med-list-item"><div style="flex:1"><strong>${esc(w.title)}</strong><div style="font-size:13px;color:var(--muted)">${esc(w.text)}</div></div>
       <button style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;padding:6px" onclick="deleteWarning(${i})" title="Remove">🗑️</button></div>`;
   });
   html+=`<button class="btn-add-med" onclick="addWarning()">+ Add Warning</button></div>`;
@@ -1727,7 +1727,7 @@ function previewImport() {
     if(!data._mt || !Array.isArray(data.meds)) throw new Error('Invalid format');
     box.innerHTML = `<div class="import-preview">
       <strong>Found ${data.meds.length} medication${data.meds.length!==1?'s':''}:</strong>
-      ${data.meds.map(m=>`<div style="display:flex;align-items:center;gap:6px;margin:4px 0"><span style="width:10px;height:10px;border-radius:50%;background:${m.color||'#999'}"></span>${m.name} (${m.dose})</div>`).join('')}
+      ${data.meds.map(m=>`<div style="display:flex;align-items:center;gap:6px;margin:4px 0"><span style="width:10px;height:10px;border-radius:50%;background:${esc(m.color||'#999')}"></span>${esc(m.name)} (${esc(m.dose)})</div>`).join('')}
       ${data.warnings.length?'<div style="margin-top:4px;color:var(--muted)">'+data.warnings.length+' warning(s)</div>':''}
       <div class="import-actions">
         <button class="btn-cancel" onclick="cancelImport()">Cancel</button>
@@ -1749,6 +1749,9 @@ function applyImport() {
     const json = decodeURIComponent(escape(atob(input.value.trim())));
     const data = JSON.parse(json);
     if(!data._mt || !Array.isArray(data.meds)) throw new Error('Invalid');
+    // Sanitize imported color values to prevent style attribute injection
+    const safeColor = c => /^#[0-9a-fA-F]{3,8}$/.test(c||'') || /^[a-zA-Z]+$/.test(c||'') ? c : '#999';
+    data.meds.forEach(m=>{ m.color=safeColor(m.color); m.bgBadge=safeColor(m.bgBadge||'#f0f0f0'); });
     CONFIG.meds = data.meds;
     CONFIG.warnings = data.warnings || [];
     CONFIG.recoveryNotes = data.recoveryNotes || [];
@@ -1792,7 +1795,7 @@ function renderWelcomeStep() {
     overlay.innerHTML = `<div class="welcome-card">
       <h2>💊 Welcome to Med Tracker</h2>
       <p>Keep track of medications, dosing intervals, and daily limits — all on your phone.</p>
-      <input type="text" id="welcome-name" value="${_welcomeName}" placeholder="Your name (optional)" onkeydown="if(event.key==='Enter')welcomeNext()">
+      <input type="text" id="welcome-name" value="${esc(_welcomeName)}" placeholder="Your name (optional)" onkeydown="if(event.key==='Enter')welcomeNext()">
       <button class="welcome-btn" onclick="welcomeNext()">Get Started</button>
     </div>`;
     setTimeout(()=>{const el=document.getElementById('welcome-name');if(el)el.focus();},100);
