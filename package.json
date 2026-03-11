@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build:netlify": "node scripts/build-netlify.mjs",
     "smoke": "node scripts/smoke.mjs",
     "smoke:headed": "node scripts/smoke.mjs --headed"
   },
