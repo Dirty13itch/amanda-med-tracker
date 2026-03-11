@@ -1,0 +1,2682 @@
+﻿import * as shared from './shared.js';
+import { createStorageManager } from './storage.js';
+
+// Show an update banner only for real updates, not for first install.
+if ('serviceWorker' in navigator) {
+  let refreshing = false;
+  let updateBanner = null;
+
+  function hideUpdateBanner() {
+    if (!updateBanner) return;
+    updateBanner.classList.remove('ub-visible');
+    setTimeout(() => {
+      if (updateBanner && updateBanner.parentNode) updateBanner.parentNode.removeChild(updateBanner);
+      updateBanner = null;
+    }, 300);
+  }
+
+  function showUpdateBanner(reg) {
+    if (updateBanner || !reg.waiting || !navigator.serviceWorker.controller) return;
+    const banner = document.createElement('div');
+    banner.className = 'update-banner';
+    banner.innerHTML = '<span>Update available</span><button type="button">Refresh</button>';
+    banner.querySelector('button').onclick = () => {
+      if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+    };
+    document.body.appendChild(banner);
+    requestAnimationFrame(() => banner.classList.add('ub-visible'));
+    updateBanner = banner;
+  }
+
+  navigator.serviceWorker.register('/sw.js').then(reg => {
+    const watchForUpdate = worker => {
+      if (!worker) return;
+      worker.addEventListener('statechange', () => {
+        if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+          showUpdateBanner(reg);
+        }
+      });
+    };
+
+    if (reg.waiting && navigator.serviceWorker.controller) showUpdateBanner(reg);
+    if (reg.installing) watchForUpdate(reg.installing);
+    reg.addEventListener('updatefound', () => watchForUpdate(reg.installing));
+
+    // Check for updates every 5 minutes.
+    setInterval(() => reg.update().catch(() => {}), 5 * 60 * 1000);
+    // Check on tab visibility change (e.g. switching back to app).
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reg.update().catch(() => {});
+    });
+  }).catch(() => {});
+
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing) return;
+    refreshing = true;
+    hideUpdateBanner();
+    window.location.reload();
+  });
+}
+
+// === Configuration Layer ===
+const CONFIG_KEY = 'medtracker-config-v1';
+const DOSES_KEY = 'medtracker-doses-v1';
+const LEGACY_STATE_KEY = shared.LEGACY_STATE_KEY;
+const LEGACY_BEDSIDE_KEY = shared.LEGACY_BEDSIDE_KEY;
+const BEDSIDE_KEY = shared.BEDSIDE_KEY;
+const CURRENT_SCHEMA = shared.APP_SCHEMA;
+const COLOR_PALETTE = [...shared.COLOR_PALETTE];
+const APP_VERSION = shared.APP_VERSION;
+const OVERDUE_GRACE_MIN = shared.OVERDUE_GRACE_MIN;
+const DUPLICATE_WINDOW_MIN = shared.DUPLICATE_WINDOW_MIN;
+const clientErrors = [];
+const storageManager = createStorageManager({ onError: error => captureError(error, 'storage') });
+let storageHealth = null;
+let storageMeta = shared.createDefaultMeta();
+let _pendingPersist = Promise.resolve();
+
+function captureError(error, context) {
+  const source = context || 'runtime';
+  const raw = error && error.message ? error.message : String(error || 'Unknown error');
+  clientErrors.push(`[${source}] ${raw}`);
+  if (clientErrors.length > 25) clientErrors.shift();
+}
+
+window.addEventListener('error', event => captureError(event.error || event.message, 'window'));
+window.addEventListener('unhandledrejection', event => captureError(event.reason, 'promise'));
+
+function refreshDerivedConfig() {
+  CONFIG = shared.normalizeConfig(CONFIG);
+  MEDS = CONFIG.meds;
+  WARNINGS = CONFIG.warnings;
+  RECOVERY_NOTES = (CONFIG.recoveryNotes || []).filter(n => n && n.text).map(note => ({
+    ...note,
+    text: typeof note.text === 'function' ? note.text : day => String(note.text || '').replace('{day}', day)
+  }));
+}
+
+function syncDebugSurface() {
+  window.__MT_DEBUG__ = {
+    get backupEnvelope() {
+      return shared.buildBackupEnvelope({ config: CONFIG, state, meta: storageMeta });
+    },
+    get supportPayload() {
+      return shared.buildSupportPayload({ config: CONFIG, state, meta: storageMeta }, storageHealth, clientErrors);
+    }
+  };
+}
+
+function applyBundle(bundle) {
+  CONFIG = shared.normalizeConfig(bundle?.config || shared.createDefaultConfig());
+  state = shared.normalizeState(bundle?.state || seedState());
+  storageMeta = shared.createDefaultMeta(bundle?.meta || storageMeta);
+  refreshDerivedConfig();
+  syncDebugSurface();
+}
+
+function persistBundle(reason) {
+  _pendingPersist = _pendingPersist
+    .then(() => storageManager.persistBundle({ config: CONFIG, state, meta: storageMeta }, reason))
+    .then(saved => {
+      applyBundle(saved);
+      return storageManager.getHealth(storageMeta);
+    })
+    .then(health => {
+      storageHealth = health;
+      syncDebugSurface();
+      return health;
+    })
+    .catch(error => {
+      captureError(error, reason);
+      return null;
+    });
+  return _pendingPersist;
+}
+
+function loadConfig() {
+  try {
+    const cfg = localStorage.getItem(CONFIG_KEY);
+    if (cfg) return shared.normalizeConfig(JSON.parse(cfg));
+  } catch (error) {
+    captureError(error, 'load-config');
+  }
+  return localStorage.getItem(LEGACY_STATE_KEY) ? shared.buildAmandaConfig() : shared.createDefaultConfig();
+}
+
+function saveConfig(cfg) {
+  CONFIG = shared.normalizeConfig(cfg);
+  refreshDerivedConfig();
+  persistBundle('save-config');
+}
+
+let CONFIG = loadConfig();
+let MEDS = CONFIG.meds;
+let WARNINGS = CONFIG.warnings;
+let RECOVERY_NOTES = [];
+const _cssSuccess = 'var(--success)';
+let state = loadState();
+refreshDerivedConfig();
+
+Object.defineProperties(window, {
+  CONFIG: { get: () => CONFIG },
+  MEDS: { get: () => MEDS },
+  WARNINGS: { get: () => WARNINGS },
+  RECOVERY_NOTES: { get: () => RECOVERY_NOTES },
+  COLOR_PALETTE: { get: () => COLOR_PALETTE },
+  state: { get: () => state }
+});
+
+function loadState() {
+  const keys = [DOSES_KEY, LEGACY_STATE_KEY];
+  for (const key of keys) {
+    try {
+      const s = localStorage.getItem(key);
+      if (s) {
+        const parsed = migrateState(JSON.parse(s));
+        if (validateState(parsed)) return parsed;
+        console.warn('Invalid state in', key, 'trying next');
+      }
+    } catch (error) {
+      captureError(error, 'load-state:' + key);
+    }
+  }
+  return seedState();
+}
+
+function migrateState(value) {
+  return shared.normalizeState(value || {});
+}
+
+function validateState(value) {
+  try {
+    const normalized = shared.normalizeState(value || {});
+    return Array.isArray(normalized.doses) && Number.isFinite(normalized.nextId);
+  } catch (error) {
+    return false;
+  }
+}
+
+function seedState() {
+  return shared.normalizeState({ schema: CURRENT_SCHEMA, doses: [], nextId: 1 });
+}
+
+function save() {
+  persistBundle('save-state');
+}
+
+function getMed(id) {
+ return MEDS.find(m=>m.id===id); }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function now() { return new Date(); }
+function todayStr() { return fmt(now(),'date'); }
+function fmt(d,type) {
+  const dt = new Date(d);
+  if(type==='time') return dt.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+  if(type==='date') return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
+  return dt.toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+}
+function minsToHM(m) {
+  if(m<=0) return 'now';
+  const h=Math.floor(m/60), mi=Math.floor(m%60);
+  return h>0 ? `${h}h ${mi}m` : `${mi}m`;
+}
+function formatBytes(value) {
+  if (!Number.isFinite(value) || value <= 0) return 'Unknown';
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getDisplayMeds(referenceDate) {
+  const ref = referenceDate ? new Date(referenceDate) : now();
+  return MEDS
+    .map((med, index) => ({ med, index }))
+    .filter(({ med }) => shared.isMedActiveOnDate(med, ref))
+    .sort((a, b) => Number(b.med.pinned) - Number(a.med.pinned) || a.index - b.index)
+    .map(entry => entry.med);
+}
+
+function getMedicationGroups(referenceDate) {
+  const ref = referenceDate ? new Date(referenceDate) : now();
+  const active = [];
+  const inactive = [];
+  const archived = [];
+  MEDS.forEach((med, index) => {
+    const entry = { med, index };
+    if (med.archived) {
+      archived.push(entry);
+      return;
+    }
+    if (shared.isMedActiveOnDate(med, ref)) {
+      active.push(entry);
+      return;
+    }
+    inactive.push(entry);
+  });
+  const sortEntries = list => list.sort((a, b) => Number(b.med.pinned) - Number(a.med.pinned) || a.index - b.index).map(entry => entry.med);
+  return {
+    active: sortEntries(active),
+    inactive: sortEntries(inactive),
+    archived: sortEntries(archived)
+  };
+}
+
+function getSupplyLabel(med) {
+  return String(med?.supplyLabel || 'units').trim() || 'units';
+}
+
+function getMedicationLifecycleLabel(med, referenceDate) {
+  const ref = referenceDate ? new Date(referenceDate) : now();
+  const dayKey = fmt(ref, 'date');
+  if (med.archived) return 'Archived';
+  if (med.startDate && dayKey < med.startDate) return `Starts ${med.startDate}`;
+  if (med.endDate && dayKey > med.endDate) return `Ended ${med.endDate}`;
+  return '';
+}
+
+function medEventsForMed(medId, options = {}) {
+  const excludeDoseId = options.excludeDoseId;
+  return state.doses
+    .filter(d => d.medId === medId && d.id !== excludeDoseId)
+    .sort((a,b)=>new Date(b.time)-new Date(a.time));
+}
+function dosesForMed(medId, options = {}) {
+  return medEventsForMed(medId, options).filter(d => (d.actionType || 'dose') !== 'skip');
+}
+function lastDose(medId, referenceDate = now(), options = {}) {
+  const ref = new Date(referenceDate || now());
+  return dosesForMed(medId, options).find(d => new Date(d.time) <= ref) || null;
+}
+function lastMedEvent(medId, referenceDate = now(), options = {}) {
+  const ref = new Date(referenceDate || now());
+  return medEventsForMed(medId, options).find(d => new Date(d.time) <= ref) || null;
+}
+function dosesOnReferenceDay(medId, referenceDate = now(), options = {}) {
+  const ref = new Date(referenceDate || now());
+  const dayKey = fmt(ref, 'date');
+  return dosesForMed(medId, options).filter(d => fmt(d.time,'date')===dayKey && new Date(d.time) <= ref);
+}
+function todayDoses(medId, referenceDate = now(), options = {}) {
+  return dosesOnReferenceDay(medId, referenceDate, options);
+}
+function rolling24hTotal(medId, referenceDate = now(), options = {}) {
+  const ref = new Date(referenceDate || now());
+  const cutoff = new Date(ref.getTime() - 24 * 3600000);
+  return dosesForMed(medId, options)
+    .filter(d => {
+      const time = new Date(d.time);
+      return time >= cutoff && time <= ref;
+    })
+    .reduce((s,d)=>s+d.mg,0);
+}
+function findPairedMeds(medId) { return MEDS.filter(m=>m.pairedWith===medId); }
+function getDoseAgeMinutes(dose, referenceDate) {
+  return dose ? (referenceDate - new Date(dose.time)) / 60000 : null;
+}
+
+function buildScheduledSlots(med, referenceDate) {
+  const times = (med.scheduledTimes || []).filter(Boolean).slice().sort();
+  if (!times.length) return [];
+  const slots = [];
+  for (const dayOffset of [-1, 0, 1]) {
+    times.forEach(label => {
+      const slot = new Date(referenceDate);
+      slot.setHours(0, 0, 0, 0);
+      slot.setDate(slot.getDate() + dayOffset);
+      const [hours, minutes] = label.split(':').map(Number);
+      slot.setHours(hours || 0, minutes || 0, 0, 0);
+      slots.push({ dueAt: slot, label });
+    });
+  }
+  return slots.sort((a, b) => a.dueAt - b.dueAt);
+}
+
+function getScheduledReadiness(med, referenceDate, options = {}) {
+  if (med.scheduleType !== 'scheduled' || !med.scheduledTimes || !med.scheduledTimes.length) return null;
+  const slots = buildScheduledSlots(med, referenceDate);
+  if (!slots.length) return null;
+  const todayKey = fmt(referenceDate, 'date');
+  const events = medEventsForMed(med.id, options)
+    .filter(event => new Date(event.time) <= referenceDate)
+    .slice()
+    .sort((a, b) => new Date(a.time) - new Date(b.time));
+  const windows = slots.map((slot, index) => {
+    const end = slots[index + 1] ? slots[index + 1].dueAt : new Date(slot.dueAt.getTime() + Math.max(med.intervalMin || 720, 60) * 60000);
+    const completion = events.find(event => {
+      const eventTime = new Date(event.scheduledFor || event.time);
+      return eventTime >= slot.dueAt && eventTime < end;
+    }) || null;
+    return { ...slot, end, completion };
+  });
+  const todaysSlots = windows.filter(slot => fmt(slot.dueAt, 'date') === todayKey);
+  const overdueSlot = todaysSlots.filter(slot => slot.dueAt <= referenceDate && !slot.completion).pop() || null;
+  const nextSlot = todaysSlots.find(slot => slot.dueAt > referenceDate) || windows.find(slot => slot.dueAt > referenceDate) || null;
+  const targetSlot = overdueSlot || nextSlot || todaysSlots[todaysSlots.length - 1] || windows[windows.length - 1];
+  if (!targetSlot) return null;
+  const targetIndex = windows.findIndex(slot => slot.dueAt.getTime() === targetSlot.dueAt.getTime());
+  const previousSlot = targetIndex > 0 ? windows[targetIndex - 1] : null;
+  const isDueNow = !!overdueSlot;
+  const minutesPastDue = isDueNow ? (referenceDate - targetSlot.dueAt) / 60000 : 0;
+  const minutesUntilDue = isDueNow ? 0 : Math.max(0, (targetSlot.dueAt - referenceDate) / 60000);
+  const windowStart = previousSlot ? previousSlot.dueAt : new Date(targetSlot.dueAt.getTime() - Math.max(med.intervalMin || 720, 60) * 60000);
+  const windowSpan = Math.max((targetSlot.end - (isDueNow ? targetSlot.dueAt : windowStart)) / 60000, 1);
+  const progressBase = isDueNow ? minutesPastDue : ((referenceDate - windowStart) / 60000);
+  const progressPct = Math.max(0, Math.min(100, (progressBase / windowSpan) * 100));
+  return {
+    scheduled: true,
+    dueAt: targetSlot.dueAt,
+    dueLabel: targetSlot.label,
+    windowEnd: targetSlot.end,
+    minutesUntilDue,
+    minutesPastDue,
+    isDueNow,
+    isOverdue: isDueNow && minutesPastDue > OVERDUE_GRACE_MIN,
+    progressPct,
+    completion: targetSlot.completion,
+    nextSlot
+  };
+}
+
+function getMedReadiness(med, atDate, options = {}) {
+  const referenceDate = atDate ? new Date(atDate) : now();
+  const todayCount = todayDoses(med.id, referenceDate, options);
+  const todayTabs = todayCount.reduce((s,d)=>s+d.tabs,0);
+  const todayMg = todayCount.reduce((s,d)=>s+d.mg,0);
+  const rollingTotal = med.trackTotal ? rolling24hTotal(med.id, referenceDate, options) : 0;
+  const last = lastDose(med.id, referenceDate, options);
+  const ago = getDoseAgeMinutes(last, referenceDate);
+  const scheduledInfo = getScheduledReadiness(med, referenceDate, options);
+  const scheduleRemaining = scheduledInfo ? scheduledInfo.minutesUntilDue : 0;
+  const intervalRemaining = scheduledInfo ? scheduleRemaining : (ago!==null&&ago<med.intervalMin ? med.intervalMin-ago : 0);
+  const conflictMed = med.conflictsWith ? getMed(med.conflictsWith) : null;
+  const lastConflict = med.conflictsWith ? lastDose(med.conflictsWith, referenceDate, options) : null;
+  const conflictAgo = getDoseAgeMinutes(lastConflict, referenceDate);
+  const conflictRemaining = conflictAgo!==null&&med.conflictMin&&conflictAgo<med.conflictMin ? med.conflictMin-conflictAgo : 0;
+  const maxDoseBlocked = !!(med.maxDoses&&todayCount.length>=med.maxDoses);
+  const dailyLimitReached = !!(med.trackTotal&&rollingTotal>=med.maxDaily);
+  const minimumDoseExceedsLimit = !!(med.trackTotal&&rollingTotal + med.perTab > med.maxDaily);
+  const dailyLimitBlocked = dailyLimitReached || minimumDoseExceedsLimit;
+  const hardBlocked = maxDoseBlocked||dailyLimitBlocked;
+  const intervalBlocked = intervalRemaining > 0;
+  const conflictBlocked = conflictRemaining > 0;
+  const baseRemaining = scheduledInfo ? scheduleRemaining : intervalRemaining;
+  const minutesUntilEligible = hardBlocked ? Infinity : Math.max(baseRemaining, conflictRemaining, 0);
+  const primaryBlock = dailyLimitBlocked ? 'dailyLimit'
+    : maxDoseBlocked ? 'maxDose'
+    : conflictBlocked && conflictRemaining >= baseRemaining ? 'conflict'
+    : intervalBlocked ? (scheduledInfo ? 'scheduled' : 'interval')
+    : null;
+  const progressWindow = primaryBlock === 'conflict'
+    ? Math.max(med.conflictMin||1, 1)
+    : Math.max(med.intervalMin||1, 1);
+  const progressPct = hardBlocked ? 100 : conflictBlocked && conflictRemaining > baseRemaining
+    ? Math.max(0, Math.min(100, (1 - (conflictRemaining / progressWindow)) * 100))
+    : (scheduledInfo ? scheduledInfo.progressPct : (minutesUntilEligible > 0
+      ? Math.max(0, Math.min(100, (1 - (minutesUntilEligible / progressWindow)) * 100))
+      : 100));
+  const isReadyRecommended = !hardBlocked && minutesUntilEligible <= 0;
+  const isOverdue = scheduledInfo
+    ? (!hardBlocked && !conflictBlocked && scheduledInfo.isOverdue)
+    : (!hardBlocked && !intervalBlocked && !conflictBlocked && ago!==null && (ago-med.intervalMin) > OVERDUE_GRACE_MIN);
+  const conflictName = conflictMed ? conflictMed.name : med.conflictsWith;
+  const blockReason = dailyLimitBlocked
+    ? (dailyLimitReached ? `24-hour limit reached (${med.maxDaily}mg)` : `Another dose would exceed the 24-hour maximum`)
+    : maxDoseBlocked
+      ? `${todayCount.length}/${med.maxDoses} doses already logged today`
+      : conflictBlocked
+        ? `Wait ${minsToHM(conflictRemaining)} after ${conflictName}`
+        : (scheduledInfo && minutesUntilEligible > 0)
+          ? `Scheduled for ${fmt(scheduledInfo.dueAt,'time')} (${minsToHM(minutesUntilEligible)} remaining)`
+          : intervalBlocked
+            ? `Available in ${minsToHM(intervalRemaining)}`
+            : '';
+  return {
+    med,
+    last,
+    ago,
+    todayCount,
+    todayTabs,
+    todayMg,
+    rollingTotal,
+    lastConflict,
+    conflictMed,
+    conflictAgo,
+    intervalRemaining,
+    conflictRemaining,
+    intervalBlocked,
+    conflictBlocked,
+    dailyLimitReached,
+    minimumDoseExceedsLimit,
+    dailyLimitBlocked,
+    maxDoseBlocked,
+    hardBlocked,
+    minutesUntilEligible,
+    nextEligibleAt: hardBlocked ? null : new Date(referenceDate.getTime()+minutesUntilEligible*60000).toISOString(),
+    isReadyRecommended,
+    isOverdue,
+    canOverride: !hardBlocked && (intervalBlocked || conflictBlocked),
+    shouldAlert: !hardBlocked && minutesUntilEligible <= 0,
+    shouldOfferReminder: !hardBlocked && minutesUntilEligible > 0,
+    primaryBlock,
+    blockReason,
+    progressPct,
+    scheduledInfo,
+    isScheduled: !!scheduledInfo,
+    scheduledDueAt: scheduledInfo ? scheduledInfo.dueAt.toISOString() : '',
+    scheduledDueLabel: scheduledInfo ? scheduledInfo.dueLabel : '',
+    scheduledWindowEnd: scheduledInfo ? scheduledInfo.windowEnd.toISOString() : ''
+  };
+}
+
+function getReadinessStatus(info) {
+  if (info.maxDoseBlocked) {
+    return { dot:'red', text:`${info.todayCount.length}/${info.med.maxDoses} doses today (complete)`, actionLabel:'Limit Reached', canOpenModal:false, canLogRecommended:false };
+  }
+  if (info.dailyLimitBlocked) {
+    const text = info.dailyLimitReached
+      ? `24hr limit reached (${info.med.maxDaily}mg)`
+      : `Next dose exceeds 24hr max (${info.rollingTotal}mg of ${info.med.maxDaily}mg)`;
+    return { dot:'red', text, actionLabel:'Limit Reached', canOpenModal:false, canLogRecommended:false };
+  }
+  if (info.isOverdue) {
+    if (info.isScheduled && info.scheduledInfo) {
+      return { dot:'red', text:`Scheduled dose overdue since ${fmt(info.scheduledInfo.dueAt,'time')}`, actionLabel:'Log Dose', canOpenModal:true, canLogRecommended:true };
+    }
+    return { dot:'red', text:`Overdue by ${minsToHM(Math.round((info.ago||0)-info.med.intervalMin))}`, actionLabel:'Log Dose', canOpenModal:true, canLogRecommended:true };
+  }
+  if (info.isReadyRecommended) {
+    if (info.isScheduled && info.scheduledInfo) {
+      return { dot:'green', text:`Due now (${fmt(info.scheduledInfo.dueAt,'time')})`, actionLabel:'Log Dose', canOpenModal:true, canLogRecommended:true };
+    }
+    return { dot:'green', text:'Ready now', actionLabel:'Log Dose', canOpenModal:true, canLogRecommended:true };
+  }
+  if (info.conflictBlocked) {
+    const conflictName = info.conflictMed ? info.conflictMed.name : info.med.conflictsWith;
+    return { dot:'gray', text:`Wait ${minsToHM(info.conflictRemaining)} after ${conflictName}`, actionLabel:'Review Timing', canOpenModal:true, canLogRecommended:false };
+  }
+  if (info.isScheduled && info.scheduledInfo) {
+    return { dot:'gray', text:`Due in ${minsToHM(info.minutesUntilEligible)} at ${fmt(info.scheduledInfo.dueAt,'time')}`, actionLabel:'Review Timing', canOpenModal:true, canLogRecommended:false };
+  }
+  return { dot:'gray', text:`Available in ${minsToHM(info.intervalRemaining)}`, actionLabel:'Review Timing', canOpenModal:true, canLogRecommended:false };
+}
+
+function getQueueTimeLabel(info) {
+  if (info.isOverdue) return 'Overdue';
+  if (info.isReadyRecommended) return 'Ready';
+  if (info.conflictBlocked) return `Wait ${minsToHM(info.minutesUntilEligible)}`;
+  if (info.isScheduled && info.scheduledInfo) return `Due ${fmt(info.scheduledInfo.dueAt,'time')}`;
+  return minsToHM(info.minutesUntilEligible);
+}
+// Retroactive time selector
+window._doseTimeOffset = 0; // 0=just now, >0=minutes ago, -1=custom time input
+function renderTimeSelector() {
+  const n=now(), hh=String(n.getHours()).padStart(2,'0'), mm=String(n.getMinutes()).padStart(2,'0');
+  return `<div class="time-selector">
+    <div class="ts-label">When was it taken?</div>
+    <div class="ts-chips">
+      <button type="button" class="ts-chip active" onclick="selectTimeChip(this,0)">Just now</button>
+      <button type="button" class="ts-chip" onclick="selectTimeChip(this,5)">5m ago</button>
+      <button type="button" class="ts-chip" onclick="selectTimeChip(this,15)">15m ago</button>
+      <button type="button" class="ts-chip" onclick="selectTimeChip(this,30)">30m ago</button>
+      <button type="button" class="ts-chip" onclick="selectTimeChip(this,60)">1hr ago</button>
+      <button type="button" class="ts-chip" onclick="showCustomTime(this)">Other\u2026</button>
+    </div>
+    <div class="ts-custom" id="ts-custom">
+      <span class="ts-custom-label">Time taken:</span>
+      <input type="time" id="ts-custom-time" value="${hh}:${mm}" onchange="onCustomTimeChange()">
+    </div>
+  </div>`;
+}
+function selectTimeChip(el, mins) {
+  document.querySelectorAll('.ts-chip').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active');
+  window._doseTimeOffset = mins;
+  const custom=document.getElementById('ts-custom');
+  if(custom) custom.classList.remove('visible');
+}
+function showCustomTime(el) {
+  document.querySelectorAll('.ts-chip').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active');
+  window._doseTimeOffset = -1;
+  const custom=document.getElementById('ts-custom');
+  if(custom) custom.classList.add('visible');
+  const n=now(), input=document.getElementById('ts-custom-time');
+  if(input) input.value=String(n.getHours()).padStart(2,'0')+':'+String(n.getMinutes()).padStart(2,'0');
+}
+function onCustomTimeChange() { window._doseTimeOffset = -1; }
+function getDoseTime() {
+  if(window._doseTimeOffset===0) return now().toISOString();
+  if(window._doseTimeOffset>0) return new Date(Date.now()-window._doseTimeOffset*60000).toISOString();
+  // Custom time input
+  const input=document.getElementById('ts-custom-time');
+  if(input&&input.value){
+    const [h,m]=input.value.split(':').map(Number);
+    const d=new Date(); d.setHours(h,m,0,0);
+    if(d>now()) d.setDate(d.getDate()-1); // if time is ahead, assume yesterday
+    return d.toISOString();
+  }
+  return now().toISOString();
+}
+
+function showDuplicateDoseModal(medId, tabs, doseTime, options) {
+  const med = getMed(medId);
+  if (!med) return;
+  window._duplicateDoseRequest = { medId, tabs, doseTime, options: options || {} };
+  showModal(`<h3>Possible duplicate dose</h3>
+    <p>${esc(med.name)} already has a ${tabs}-tab entry within ${DUPLICATE_WINDOW_MIN} minutes of ${fmt(doseTime,'time')}.</p>
+    <div class="warn-box">Confirm only if this was a separate real dose.</div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-danger" onclick="confirmDuplicateDose()">Log Anyway</button>
+    </div>`);
+}
+
+function confirmDuplicateDose() {
+  const pending = window._duplicateDoseRequest;
+  if (!pending) return closeModal();
+  const result = addDose(pending.medId, pending.tabs, pending.doseTime, { ...(pending.options || {}), forceDuplicate: true });
+  if (result && Array.isArray(pending.options?.pairedMedIds)) {
+    pending.options.pairedMedIds.forEach(pairedMedId => {
+      addDose(pairedMedId, 1, pending.doseTime, {
+        forceDuplicate: true,
+        loggedBy: pending.options.loggedBy || ''
+      });
+    });
+  }
+  if (result) closeModal();
+}
+
+function addDose(medId, tabs, customTime, options) {
+  const opts = options || {};
+  try {
+    const med = getMed(medId);
+    if (!med) { console.error('addDose: unknown med', medId); return false; }
+    const mg = med.perTab * tabs;
+    const doseTime = customTime || getDoseTime();
+    if (!doseTime || isNaN(new Date(doseTime).getTime())) { console.error('addDose: invalid time', doseTime); return false; }
+    if (!opts.forceDuplicate && shared.isDuplicateDose(state, medId, tabs, doseTime)) {
+      showDuplicateDoseModal(medId, tabs, doseTime, opts);
+      return false;
+    }
+    const readiness = getMedReadiness(med, doseTime);
+    const dose = {
+      id: state.nextId++,
+      medId,
+      time: doseTime,
+      tabs,
+      mg,
+      note: String(opts.note || '').trim(),
+      loggedBy: String(opts.loggedBy || CONFIG.profile?.defaultLoggerName || '').trim(),
+      overrideType: String(opts.overrideType || (readiness.conflictBlocked ? 'conflict' : readiness.intervalBlocked ? 'early' : '')).trim(),
+      overrideReason: String(opts.overrideReason || readiness.blockReason || '').trim(),
+      symptomNote: String(opts.symptomNote || '').trim(),
+      scheduledFor: readiness.scheduledDueAt || ''
+    };
+    state.doses.push(dose);
+    state.lastAction = { type: 'add-dose', doseId: dose.id };
+    if (navigator.vibrate) navigator.vibrate(50);
+    prevAvailability[medId] = false;
+    save();
+    render();
+    maybeRequestNotifications();
+    dismissAlertBanner();
+    showToast(`${med.name} logged`);
+    return true;
+  } catch (e) {
+    console.error('addDose error:', e);
+    try { save(); render(); } catch (e2) { console.error('addDose recovery failed:', e2); }
+    return false;
+  }
+}
+
+function recordSkipEvent(medId, customTime, options) {
+  const opts = options || {};
+  try {
+    const med = getMed(medId);
+    if (!med) return false;
+    const eventTime = customTime || getDoseTime();
+    const readiness = getMedReadiness(med, eventTime);
+    const skipEntry = {
+      id: state.nextId++,
+      medId,
+      time: eventTime,
+      actionType: 'skip',
+      tabs: 0,
+      mg: 0,
+      note: String(opts.note || 'Scheduled dose skipped').trim(),
+      loggedBy: String(opts.loggedBy || CONFIG.profile?.defaultLoggerName || '').trim(),
+      overrideType: 'skip',
+      overrideReason: 'scheduled-skip',
+      symptomNote: String(opts.symptomNote || '').trim(),
+      scheduledFor: readiness.scheduledDueAt || eventTime
+    };
+    state.doses.push(skipEntry);
+    state.lastAction = { type: 'skip-dose', doseId: skipEntry.id };
+    save();
+    render();
+    showToast(`${med.name} skipped`);
+    return true;
+  } catch (error) {
+    captureError(error, 'skip-dose');
+    return false;
+  }
+}
+
+function skipScheduledDose(medId) {
+  const didSkip = recordSkipEvent(medId, getDoseTime(), {
+    loggedBy: CONFIG.profile?.defaultLoggerName || ''
+  });
+  if (didSkip) closeModal();
+}
+
+function toDateTimeLocalValue(isoString) {
+  const value = new Date(isoString);
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  const hours = String(value.getHours()).padStart(2, '0');
+  const minutes = String(value.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function handleEditDose(id) {
+  const dose = state.doses.find(entry => entry.id === id);
+  const med = dose ? getMed(dose.medId) : null;
+  if (!dose || !med) return;
+  const tabsValue = dose.actionType === 'skip' ? 0 : Math.max(1, dose.tabs || 1);
+  showModal(`<h3>Edit ${esc(med.name)} entry</h3>
+    <div class="settings-field"><label>Logged time</label><input type="datetime-local" id="edit-dose-time" value="${toDateTimeLocalValue(dose.time)}"></div>
+    ${dose.actionType === 'skip' ? '<p>This is a skipped scheduled dose.</p>' : `<div class="settings-field"><label>Tabs</label><input type="number" id="edit-dose-tabs" min="1" max="${med.maxTabs || 4}" value="${tabsValue}"></div>`}
+    <div class="settings-field"><label>Note</label><textarea id="edit-dose-note" placeholder="Optional note">${esc(dose.note || '')}</textarea></div>
+    <div class="settings-field"><label>Logged By</label><input type="text" id="edit-dose-logger" value="${esc(dose.loggedBy || '')}" placeholder="Who logged this?"></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-confirm" onclick="saveEditedDose(${id})">Save Changes</button>
+    </div>`);
+}
+
+function saveEditedDose(id) {
+  const dose = state.doses.find(entry => entry.id === id);
+  const med = dose ? getMed(dose.medId) : null;
+  if (!dose || !med) return closeModal();
+  const timeInput = document.getElementById('edit-dose-time');
+  const noteInput = document.getElementById('edit-dose-note');
+  const loggerInput = document.getElementById('edit-dose-logger');
+  const tabsInput = document.getElementById('edit-dose-tabs');
+  const nextTime = timeInput && timeInput.value ? new Date(timeInput.value).toISOString() : dose.time;
+  const nextTabs = dose.actionType === 'skip' ? 0 : Math.max(1, parseInt(tabsInput.value, 10) || dose.tabs || 1);
+  const readiness = getMedReadiness(med, nextTime, { excludeDoseId: id });
+  dose.time = nextTime;
+  dose.tabs = nextTabs;
+  dose.mg = dose.actionType === 'skip' ? 0 : med.perTab * nextTabs;
+  dose.note = noteInput ? noteInput.value.trim() : dose.note;
+  dose.loggedBy = loggerInput ? loggerInput.value.trim() : dose.loggedBy;
+  dose.scheduledFor = med.scheduleType === 'scheduled' ? (readiness.scheduledDueAt || dose.scheduledFor || '') : '';
+  dose.overrideType = dose.actionType === 'skip'
+    ? 'skip'
+    : (readiness.conflictBlocked ? 'conflict' : readiness.intervalBlocked ? 'early' : (dose.overrideType === 'edited' ? 'edited' : ''));
+  dose.overrideReason = readiness.blockReason || (dose.overrideType === 'edited' ? dose.overrideReason : '');
+  state.lastAction = { type: 'edit-dose', doseId: dose.id };
+  save();
+  render();
+  closeModal();
+  showToast(`${med.name} updated`);
+}
+
+function undoLastDose() {
+  const action = state.lastAction;
+  if (!action || action.type !== 'add-dose') {
+    showToast('Nothing to undo');
+    return;
+  }
+  const before = state.doses.length;
+  state.doses = state.doses.filter(d => d.id !== action.doseId);
+  if (state.doses.length === before) {
+    showToast('Nothing to undo');
+    return;
+  }
+  state.lastAction = { type: 'undo-add', doseId: action.doseId };
+  save();
+  render();
+  showToast('Last dose removed');
+}
+
+function removeDose(id) {
+  try {
+    const removed = state.doses.find(d => d.id === id) || null;
+    state.doses = state.doses.filter(d => d.id !== id);
+    state.lastAction = removed ? { type: 'remove-dose', dose: removed } : null;
+    save(); render();
+  } catch(e) { console.error('removeDose error:',e); try{save();render();}catch(e2){} }
+}
+// Rendering: each call is isolated so one failure doesn't break the whole refresh.
+function render() {
+  try{renderClock();}catch(e){console.error('renderClock:',e);}
+  try{renderDayCounter();}catch(e){console.error('renderDayCounter:',e);}
+  try{renderTrackedTotals();}catch(e){console.error('renderTrackedTotals:',e);}
+  try{renderWarnings();}catch(e){console.error('renderWarnings:',e);}
+  try{renderRecoveryNote();}catch(e){console.error('renderRecoveryNote:',e);}
+  try{renderCareSummary();}catch(e){console.error('renderCareSummary:',e);}
+  try{renderNextUp();}catch(e){console.error('renderNextUp:',e);}
+  try{renderCards();}catch(e){console.error('renderCards:',e);}
+  try{renderLog();}catch(e){console.error('renderLog:',e);}
+}
+
+function renderClock() {
+  document.getElementById('clock').textContent = now().toLocaleTimeString([],{hour:'numeric',minute:'2-digit',second:'2-digit'});
+}
+function renderDayCounter() {
+  const el=document.getElementById('day-counter');
+  if(!CONFIG.eventDate){el.textContent='';return;}
+  const diff = Math.floor((now()-new Date(CONFIG.eventDate+'T00:00:00'))/86400000);
+  const evtLabel = CONFIG.eventLabel || 'Event';
+  el.textContent = diff===0 ? evtLabel+' Day' : `Day ${diff} post-${evtLabel.toLowerCase()}`;
+}
+function renderTrackedTotals() {
+  const container=document.getElementById('tracked-totals');
+  const trackedMeds=getDisplayMeds().filter(m=>m.trackTotal);
+  if(!trackedMeds.length){container.innerHTML='';return;}
+  container.innerHTML=trackedMeds.map(med=>{
+    const amt=rolling24hTotal(med.id);
+    const pct=Math.min(100,amt/med.maxDaily*100);
+    const id='tt-'+med.id;
+    return `<div class="tracked-total-section">
+      <div class="tracked-total-header">
+        <h3>${esc(med.name)} (rolling 24hrs)</h3>
+        <div><span class="tracked-total-amount" id="${id}-amount">${amt}</span><span style="font-size:14px;color:var(--muted)">mg / ${med.maxDaily}mg</span></div>
+      </div>
+      <div class="tracked-total-bar"><div class="tracked-total-fill" id="${id}-fill" style="width:${pct}%;background:${amt<=med.maxDaily*0.5?_cssSuccess:amt<=med.maxDaily*0.75?'#f39c12':'var(--danger-border)'}"></div></div>
+    </div>`;
+  }).join('');
+  // Update colors on amount spans
+  trackedMeds.forEach(med=>{
+    const amt=rolling24hTotal(med.id);
+    const amtEl=document.getElementById('tt-'+med.id+'-amount');
+    if(amtEl){
+      if(amt<=med.maxDaily*0.5) amtEl.style.color='var(--success)';
+      else if(amt<=med.maxDaily*0.75) amtEl.style.color='#f39c12';
+      else amtEl.style.color='var(--danger-border)';
+    }
+  });
+}
+function renderCareSummary() {
+  const container = document.getElementById('care-summary');
+  if (!container) return;
+
+  const profile = CONFIG.profile || shared.createEmptyProfile();
+  const activeMeds = getDisplayMeds();
+  const lowSupply = activeMeds
+    .map(med => ({ med, remaining: shared.getCurrentSupply(med, state) }))
+    .filter(item => item.remaining !== null && item.remaining <= (item.med.refillThreshold || 0));
+  const lastDoseEntry = [...state.doses].sort((a, b) => new Date(b.time) - new Date(a.time))[0] || null;
+  const health = storageHealth || {
+    backend: storageMeta.backend || 'localStorage',
+    bestEffort: true,
+    persisted: false,
+    usage: null,
+    quota: null,
+    lastSuccessfulBackupAt: storageMeta.lastSuccessfulBackupAt,
+    lastIntegrityCheckAt: storageMeta.lastIntegrityCheckAt,
+    lastSnapshotAt: storageMeta.lastSnapshotAt
+  };
+
+  container.innerHTML = `<section class="care-summary" aria-label="Patient and caregiver summary">
+    <div class="care-summary-header">
+      <div>
+        <h2>${esc(profile.careLabel || 'Care Summary')}</h2>
+        <div class="care-summary-sub">${activeMeds.length} active medication${activeMeds.length !== 1 ? 's' : ''}${lastDoseEntry ? ` • Last dose ${fmt(lastDoseEntry.time)}` : ' • No doses logged yet'}</div>
+      </div>
+      <div class="care-summary-actions">
+        <button class="summary-action" onclick="openHandoffSummary()">Open handoff</button>
+        <button class="summary-action" onclick="openMedicationList()">Medication list</button>
+        <button class="summary-action" onclick="downloadFullBackup()">Backup</button>
+      </div>
+    </div>
+    <div class="summary-grid">
+      <div class="summary-panel">
+        <h3>Profile</h3>
+        <div class="summary-item"><strong>Patient</strong>${esc(CONFIG.patientName || 'Not set')}</div>
+        ${profile.emergencyContact ? `<div class="summary-item" style="margin-top:8px"><strong>Emergency Contact</strong>${esc(profile.emergencyContact)}</div>` : ''}
+        ${profile.importantInstructions ? `<div class="summary-item" style="margin-top:8px"><strong>Important Instructions</strong>${esc(profile.importantInstructions)}</div>` : ''}
+      </div>
+      <div class="summary-panel">
+        <h3>Key Safety Context</h3>
+        <div class="summary-item"><strong>Allergies</strong>${profile.allergies.length ? `<div class="summary-list">${profile.allergies.map(item => `<span class="summary-chip">${esc(item)}</span>`).join('')}</div>` : 'None listed'}</div>
+        <div class="summary-item" style="margin-top:8px"><strong>Conditions</strong>${profile.conditions.length ? `<div class="summary-list">${profile.conditions.map(item => `<span class="summary-chip">${esc(item)}</span>`).join('')}</div>` : 'None listed'}</div>
+        ${lowSupply.length ? `<div class="summary-item" style="margin-top:8px"><strong>Low Supply</strong>${lowSupply.map(item => `${esc(item.med.name)} (${item.remaining} ${esc(getSupplyLabel(item.med))} left)`).join(', ')}</div>` : ''}
+      </div>
+    </div>
+    <div class="storage-health">
+      <div class="storage-tile"><strong>Version</strong><span>${esc(APP_VERSION)}</span></div>
+      <div class="storage-tile"><strong>Storage</strong><span>${esc(String(health.backend || 'localStorage'))}</span></div>
+      <div class="storage-tile"><strong>Persistence</strong><span>${health.persisted ? 'Protected' : 'Best effort'}</span></div>
+      <div class="storage-tile"><strong>Origin</strong><span>${esc(String(health.origin || location.origin))}</span></div>
+      <div class="storage-tile"><strong>Usage</strong><span>${health.usage !== null ? `${formatBytes(health.usage)} / ${formatBytes(health.quota)}` : 'Unknown'}</span></div>
+      <div class="storage-tile"><strong>Integrity Check</strong><span>${health.lastIntegrityCheckAt ? fmt(health.lastIntegrityCheckAt) : 'Not yet'}</span></div>
+      <div class="storage-tile"><strong>Last Backup</strong><span>${health.lastSuccessfulBackupAt ? fmt(health.lastSuccessfulBackupAt) : 'Not yet'}</span></div>
+    </div>
+  </section>`;
+}
+function renderWarnings() {
+  const container=document.getElementById('warnings-content');
+  if(!container) return;
+  // Static warnings from WARNINGS array
+  let html=WARNINGS.map(w=>`<div class="alert alert-${w.type}"><strong>${esc(w.title)}</strong>${esc(w.text)}</div>`).join('');
+  // Auto-generate conflict warnings from med config
+  MEDS.filter(m=>m.conflictsWith).forEach(med=>{
+    const other=getMed(med.conflictsWith);
+    if(!other) return;
+    const existsAlready=WARNINGS.some(w=>{
+      const t=w.title.toLowerCase();
+      const matchMed=t.includes(med.name.toLowerCase())||(med.brand&&t.includes(med.brand.toLowerCase()));
+      const matchOther=t.includes(other.name.toLowerCase())||(other.brand&&t.includes(other.brand.toLowerCase()));
+      return matchMed&&matchOther;
+    });
+    if(!existsAlready) {
+      html+=`<div class="alert alert-warn"><strong>${esc(other.name)} + ${esc(med.name)} Separation</strong>Must wait at least ${med.conflictMin} minutes between these two medications</div>`;
+    }
+  });
+  container.innerHTML=html;
+  // Hide warnings section if nothing to show
+  const section=document.getElementById('warnings-section');
+  if(section) section.style.display=(WARNINGS.length||MEDS.some(m=>m.conflictsWith))?'':'none';
+}
+function renderLog() {
+  const previewEl=document.getElementById('log-preview');
+  const fullEl=document.getElementById('log-full');
+  const countEl=document.getElementById('log-count');
+  const sorted=[...state.doses].sort((a,b)=>new Date(b.time)-new Date(a.time));
+  const t=todayStr();
+  const todayTotal=state.doses.filter(d=>fmt(d.time,'date')===t).reduce((s,d)=>s+d.tabs,0);
+  countEl.textContent = todayTotal > 0 ? `(${todayTotal} today)` : '';
+  if(!sorted.length){previewEl.innerHTML='<div class="log-empty">No doses logged yet</div>';fullEl.innerHTML='';return;}
+  // Build running totals for all meds that have trackTotal
+  const trackedTotals={};
+  const trackedMedIds=new Set(MEDS.filter(m=>m.trackTotal).map(m=>m.id));
+  const trackedRunning={};
+  [...state.doses].sort((a,b)=>new Date(a.time)-new Date(b.time)).forEach(d=>{
+    if(trackedMedIds.has(d.medId) && (d.actionType || 'dose') !== 'skip'){
+      trackedRunning[d.medId]=(trackedRunning[d.medId]||0)+d.mg;
+      trackedTotals[d.id]=trackedRunning[d.medId];
+    }
+  });
+  const renderEntry = d => {
+    const med=getMed(d.medId);
+    const isSkip = (d.actionType || 'dose') === 'skip';
+    const tabLabel=isSkip ? 'Skipped scheduled dose' : (d.tabs>1?`${d.tabs} tabs`:'1 tab');
+    const mgLabel=!isSkip&&d.mg?` (${d.mg}mg)`:''; 
+    const trackedNote=(med&&med.trackTotal&&!isSkip)?`<div class="log-tracked-note" style="color:${med.color}">Running total: ${trackedTotals[d.id]||0}mg</div>`:'';
+    const auditBits = [];
+    if (d.loggedBy) auditBits.push(`Logged by ${esc(d.loggedBy)}`);
+    if (d.overrideType) auditBits.push(`Override: ${esc(d.overrideType)}`);
+    if (d.overrideReason) auditBits.push(`Reason: ${esc(d.overrideReason)}`);
+    if (d.note) auditBits.push(esc(d.note));
+    const auditHtml = auditBits.length ? `<div class="card-note">${auditBits.join(' • ')}</div>` : '';
+    return `<div class="log-entry">
+      <div class="log-time">${fmt(d.time,'time')}</div>
+      <div class="log-dot" style="background:${med?med.color:'#999'}"></div>
+      <div class="log-detail">
+        <div><strong>${esc(med?med.name:d.medId)}</strong> &mdash; ${tabLabel}${mgLabel}</div>
+        ${trackedNote}
+        ${auditHtml}
+      </div>
+      <button class="log-remove" onclick="handleEditDose(${d.id})" title="Edit this entry" aria-label="Edit ${esc(med?med.name:d.medId)} entry at ${fmt(d.time,'time')}">Edit</button>
+      <button class="log-remove" onclick="handleRemove(${d.id})" title="Remove this entry" aria-label="Remove ${esc(med?med.name:d.medId)} dose at ${fmt(d.time,'time')}">&times;</button>
+    </div>`;
+  };
+  // Show last 3 as preview (always visible)
+  const preview = sorted.slice(0, 3);
+  const rest = sorted.slice(3);
+  previewEl.innerHTML = preview.map(renderEntry).join('');
+  fullEl.innerHTML = rest.map(renderEntry).join('');
+}
+
+// === Alert & Reminder System ===
+let prevAvailability = {};
+let alertsInitialized = false;
+let alertBannerTimeout = null;
+
+function playChime() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const t = ctx.currentTime;
+    // Gentle ascending two-tone chime.
+    [523.25, 659.25].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      const start = t + i * 0.2;
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(0.15, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, start + 0.45);
+      osc.start(start);
+      osc.stop(start + 0.45);
+    });
+  } catch(e) {}
+}
+
+function positionAlertBanner() {
+  const header = document.querySelector('header');
+  const top = header ? Math.ceil(header.getBoundingClientRect().bottom + 12) : 96;
+  document.documentElement.style.setProperty('--alert-banner-top', top + 'px');
+}
+
+function showAlertBanner(text, isOverdue, medId) {
+  const banner = document.getElementById('alert-banner');
+  const textEl = document.getElementById('ab-text');
+  const logBtn = document.getElementById('ab-log-btn');
+  positionAlertBanner();
+  textEl.textContent = text;
+  banner.className = 'alert-banner ab-visible ' + (isOverdue ? 'ab-overdue' : 'ab-ready');
+  logBtn.onclick = () => { dismissAlertBanner(); handleLog(medId); };
+  clearTimeout(alertBannerTimeout);
+  alertBannerTimeout = setTimeout(dismissAlertBanner, 30000); // auto-dismiss after 30s
+}
+
+function dismissAlertBanner() {
+  const banner = document.getElementById('alert-banner');
+  banner.classList.remove('ab-visible');
+  clearTimeout(alertBannerTimeout);
+}
+
+function fireNotification(medName, isOverdue) {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    try {
+      new Notification(isOverdue ? medName + ' is overdue' : 'Time for ' + medName, {
+        body: isOverdue ? 'Tap to open tracker and log dose' : medName + ' is now available',
+        icon: '/icon.svg',
+        tag: 'med-reminder-' + medName,
+        renotify: true
+      });
+    } catch(e) {}
+  }
+}
+
+// Request notification permission on first interaction
+function maybeRequestNotifications() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
+// Overdue detection on app resume
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    render();
+    checkAlerts(true);
+  }
+});
+
+// Start alert check loop (every 30 seconds)
+checkAlerts(false); // initialize state
+setInterval(() => checkAlerts(false), 30000);
+
+// Modal
+let _modalReturnFocus = null;
+function showModal(html){
+  window._doseTimeOffset = 0; // Reset time selector for each new modal
+  _modalReturnFocus = document.activeElement;
+  document.getElementById('modal').innerHTML='<div class="modal-handle"></div>'+html;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+  // Enable time selector and focus after modal animation settles (prevents phantom taps during slide-up)
+  setTimeout(() => {
+    const ts = document.querySelector('.time-selector');
+    if (ts) ts.classList.add('ts-ready');
+    const btn = document.querySelector('.modal .btn-confirm, .modal .btn-cancel, .modal .btn-danger');
+    if (btn) btn.focus();
+  }, 400);
+}
+function closeModal(){
+  document.getElementById('modal-overlay').classList.add('hidden');
+  window._pendingModalAction = null;
+  if (_modalReturnFocus) { _modalReturnFocus.focus(); _modalReturnFocus = null; }
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !document.getElementById('modal-overlay').classList.contains('hidden')) {
+    closeModal();
+  }
+});
+function selectTab(el, groupId, val) {
+  document.querySelectorAll('#'+groupId+' .modal-tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  window._modalTabVal=val;
+}
+
+function handleRemove(id) {
+  const d=state.doses.find(x=>x.id===id);
+  if(!d) return;
+  const med=getMed(d.medId);
+  const actionLabel = (d.actionType || 'dose') === 'skip' ? 'skip entry' : 'dose';
+  showModal(`<h3>Remove dose?</h3>
+    <p>Remove ${esc(med?med.name:d.medId)} ${actionLabel} (${fmt(d.time,'time')}) from the log?</p>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Keep</button>
+      <button class="btn-danger" onclick="removeDose(${id});closeModal()">Remove</button>
+    </div>`);
+}
+
+function handleExport() {
+  const lines=[...state.doses].sort((a,b)=>new Date(a.time)-new Date(b.time)).map(d=>{
+    const med=getMed(d.medId);
+    const extras = [d.loggedBy ? `logged by ${d.loggedBy}` : '', d.overrideType ? `override ${d.overrideType}` : '', d.overrideReason ? d.overrideReason : ''].filter(Boolean).join(' | ');
+    const action = (d.actionType || 'dose') === 'skip' ? 'SKIPPED' : `${d.tabs} tab(s)\t${d.mg}mg`;
+    return `${fmt(d.time)}\t${med?med.name:d.medId}\t${action}${extras ? `\t${extras}` : ''}`;
+  });
+  let header=(CONFIG.patientName?CONFIG.patientName+' ':'')+'Medication Log';
+  if(CONFIG.eventDate) header+='\n'+CONFIG.eventLabel+': '+CONFIG.eventDate;
+  header+='\nExported: '+now().toLocaleString();
+  const text=header+'\n\n'+lines.join('\n');
+  const blob=new Blob([text],{type:'text/plain'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='med-log-'+todayStr()+'.txt';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+function handleClear() {
+  showModal(`<h3>Clear dose history?</h3>
+    <p>This will remove all logged doses. This cannot be undone.</p>
+    <div class="modal-actions" style="flex-direction:column;gap:8px">
+      <button class="btn-confirm" onclick="handleExport();closeModal()">Export Log First</button>
+      <button class="btn-danger" onclick="confirmClearAllData()">Clear Dose History</button>
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+    </div>`);
+}
+
+async function confirmClearAllData() {
+  localStorage.removeItem(DOSES_KEY);
+  state = seedState();
+  await persistBundle('clear-doses');
+  render();
+  closeModal();
+}
+
+function formatIntervalLabel(minutes) {
+  return minutes >= 60 ? Math.round(minutes / 60) + ' hour' + (minutes >= 120 ? 's' : '') : minutes + ' minutes';
+}
+
+function buildIntervalWarning(info) {
+  if (!info.intervalBlocked) return '';
+  if (info.isScheduled && info.scheduledInfo) {
+    return `<div class="warn-box">This medication is scheduled for ${fmt(info.scheduledInfo.dueAt,'time')}. It becomes due in ${minsToHM(info.minutesUntilEligible)}.</div>`;
+  }
+  return `<div class="warn-box">Last ${esc(info.med.name)} was ${minsToHM(info.ago)} ago. Recommended interval: ${formatIntervalLabel(info.med.intervalMin)}. Available in ${minsToHM(info.intervalRemaining)}.</div>`;
+}
+
+function buildConflictWarning(info) {
+  if (!info.conflictBlocked) return '';
+  const conflictName = info.conflictMed ? info.conflictMed.name : info.med.conflictsWith;
+  return `<div class="warn-box"><strong>WARNING:</strong> ${esc(conflictName)} was taken ${minsToHM(info.conflictAgo)} ago. You should wait at least ${formatIntervalLabel(info.med.conflictMin)} between ${esc(conflictName)} and ${esc(info.med.name)}. Recommend waiting ${Math.ceil(info.conflictRemaining)} more minutes.</div>`;
+}
+function renderScheduledSkipButton(med, info) {
+  if (!med || med.scheduleType !== 'scheduled' || !info || !info.isScheduled || info.minutesUntilEligible > 0) return '';
+  return `<button class="btn-cancel" onclick="skipScheduledDose('${med.id}')">Skip This Dose</button>`;
+}
+
+function getNextUpQueue(referenceDate) {
+  const queue = [];
+  const displayMeds = getDisplayMeds(referenceDate);
+  displayMeds.forEach(med => {
+    const info = getMedReadiness(med, referenceDate);
+    if (info.hardBlocked) return;
+    queue.push(info);
+  });
+  queue.sort((a, b) => {
+    if (a.isOverdue !== b.isOverdue) return a.isOverdue ? -1 : 1;
+    if (a.shouldAlert !== b.shouldAlert) return a.shouldAlert ? -1 : 1;
+    const timeDiff = a.minutesUntilEligible - b.minutesUntilEligible;
+    if (Math.abs(timeDiff) > 0.5) return timeDiff;
+    if (a.med.scheduled !== b.med.scheduled) return a.med.scheduled ? -1 : 1;
+    return displayMeds.indexOf(a.med) - displayMeds.indexOf(b.med);
+  });
+  return queue;
+}
+
+function renderNextUp() {
+  const container = document.getElementById('next-up');
+  const queue = getNextUpQueue();
+  if (queue.length === 0) {
+    container.innerHTML = '<div class="next-up-clear"><div class="nuc-calm">All caught up!</div><div class="nuc-detail">Every scheduled medication is on track. Great job.</div></div>';
+    return;
+  }
+  const primary = queue[0];
+  const primaryStatus = getReadinessStatus(primary);
+  const rest = queue.slice(1, 4);
+  if (!primary.isReadyRecommended && !primary.isOverdue && primary.minutesUntilEligible > 120) {
+    container.innerHTML = `<div class="next-up-clear"><div class="nuc-calm">All clear - you're on track</div><div class="nuc-detail">Next up: ${esc(primary.med.name)} in ${minsToHM(primary.minutesUntilEligible)}. Relax until then.</div></div>`;
+    return;
+  }
+  const cardClass = primary.isOverdue ? 'nuc-overdue' : primary.isReadyRecommended ? 'nuc-available' : '';
+  const fillColor = primary.isReadyRecommended ? 'var(--success)' : primary.med.color;
+  const btnLabel = primaryStatus.canLogRecommended ? 'Log Dose Now' : primaryStatus.actionLabel;
+  let html = `<div class="next-up-label">Next Up</div>
+    <div class="next-up-card ${cardClass}">
+      <div class="nuc-header">
+        <div>
+          <div class="nuc-name" style="color:${primary.med.color}">${esc(primary.med.name)}</div>
+          ${primary.med.brand ? `<div class="nuc-brand">${esc(primary.med.brand)}</div>` : ''}
+        </div>
+        <div class="card-badge" style="background:${primary.med.bgBadge};color:${primary.med.color}">${esc(primary.med.purpose)}</div>
+      </div>
+      <div class="nuc-dose">${esc(primary.med.dose)} &mdash; ${esc(primary.med.freq)}</div>
+      <div class="nuc-status"><span class="dot ${primaryStatus.dot}"></span>${primaryStatus.text}</div>
+      <div class="nuc-timer-bar"><div class="nuc-timer-fill" style="width:${primary.progressPct}%;background:${fillColor}"></div></div>
+      ${primary.shouldOfferReminder ? `<button class="btn-reminder" onclick="event.stopPropagation();downloadReminder('${primary.med.id}')" style="margin-bottom:12px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="7"/><path d="M12 9v4l2.5 1.5"/><path d="M5 3L2 6M22 6l-3-3"/></svg>Set phone alarm for when it's due</button>` : ''}
+      <button class="btn-log-next" style="background:${primary.med.color}" onclick="handleLog('${primary.med.id}')">${btnLabel}</button>
+    </div>`;
+  if (nqiExpandedMedId && !rest.find(i => i.med.id === nqiExpandedMedId)) nqiExpandedMedId = null;
+  if (rest.length > 0) {
+    const secOpen = !nqiSectionCollapsed;
+    html += `<button class="nqi-section-toggle" onclick="toggleNqiSection()" aria-expanded="${secOpen}" aria-controls="nqi-queue-wrap">
+      <span>Then (${rest.length} more)</span>
+      <span class="chevron ${secOpen ? 'open' : ''}">&#9660;</span>
+    </button>`;
+    html += `<div id="nqi-queue-wrap" class="nqi-queue-wrap ${nqiSectionCollapsed ? 'collapsed' : ''}"><div class="next-up-queue">`;
+    rest.forEach(item => {
+      const itemStatus = getReadinessStatus(item);
+      const isExp = nqiExpandedMedId === item.med.id;
+      html += `<div class="nqi" onclick="toggleNqiItem('${item.med.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleNqiItem('${item.med.id}')}" role="button" tabindex="0" aria-expanded="${isExp}">
+        <div class="nqi-dot" style="background:${item.med.color}"></div>
+        <div class="nqi-name">${esc(item.med.name)}</div>
+        <div class="nqi-time">${getQueueTimeLabel(item)}</div>
+        <span class="nqi-chevron ${isExp ? 'open' : ''}">&#9660;</span>
+      </div>`;
+      html += `<div class="nqi-detail ${isExp ? 'open' : ''}">
+        <div class="nqi-detail-dose">${esc(item.med.dose)} &mdash; ${esc(item.med.freq)}</div>
+        <div class="nqi-detail-status"><span class="dot ${itemStatus.dot}"></span>${itemStatus.text}</div>
+        <button class="nqi-btn-log" style="background:${item.med.color}" onclick="event.stopPropagation();handleLog('${item.med.id}')">${itemStatus.canLogRecommended ? 'Log Dose' : itemStatus.actionLabel}</button>
+        ${item.shouldOfferReminder ? `<button class="nqi-btn-reminder" onclick="event.stopPropagation();downloadReminder('${item.med.id}')">&#9200; Set alarm</button>` : ''}
+      </div>`;
+    });
+    html += '</div></div>';
+  }
+  container.innerHTML = html;
+}
+
+function renderCards() {
+  const container=document.getElementById('med-cards');
+  const activeMeds = getDisplayMeds();
+  if(activeMeds.length===0){
+    container.innerHTML='<div class="empty-state"><p>No medications added yet.<br>Tap the gear icon to add your first one.</p><button onclick="openSettings();startAddMed()">+ Add Medication</button></div>';
+    return;
+  }
+  container.innerHTML=activeMeds.map(med=>{
+    const info=getMedReadiness(med);
+    const status=getReadinessStatus(info);
+    const warnsHtml=(med.warns||[]).map(w=>`<div class="card-warn">${esc(w)}</div>`).join('');
+    const scheduleText = med.scheduleType === 'scheduled' && med.scheduledTimes && med.scheduledTimes.length
+      ? `Scheduled: ${med.scheduledTimes.join(', ')}`
+      : (med.reason || med.instructions || '');
+    const supplyRemaining = shared.getCurrentSupply(med, state);
+    const supplyPct = supplyRemaining === null || !med.supplyOnHand ? null : Math.max(0, Math.min(100, (supplyRemaining / med.supplyOnHand) * 100));
+    const supplyTone = supplyRemaining !== null && supplyRemaining <= (med.refillThreshold || 0) ? 'var(--danger-border)' : 'var(--success)';
+    const trackedPct = med.trackTotal && med.maxDaily ? Math.min(100, (info.rollingTotal / med.maxDaily) * 100) : null;
+    return `<div class="card" role="listitem" aria-label="${esc(med.name)} medication card" data-med-id="${esc(med.id)}">
+      <div class="card-accent" style="background:${med.color}"></div>
+      <div class="card-body">
+        <div class="card-top">
+          <div>
+            <div class="card-name" style="color:${med.color}">${esc(med.name)}</div>
+            ${med.brand?`<div class="card-brand">${esc(med.brand)}</div>`:''}
+          </div>
+          <div class="card-badge" style="background:${med.bgBadge};color:${med.color}">${esc(med.purpose)}</div>
+        </div>
+        <div class="card-dose">${esc(med.dose)} &mdash; ${esc(med.freq)}</div>
+        ${scheduleText ? `<div class="card-note">${esc(scheduleText)}</div>` : ''}
+        <div class="card-status"><span class="dot ${status.dot}"></span>${status.text}</div>
+        <div class="card-timer">${info.last?`Last: ${fmt(info.last.time,'time')} (${minsToHM(info.ago)} ago)`:'No doses logged yet'}</div>
+        <div class="timer-bar"><div class="timer-fill" style="width:${info.progressPct}%;background:${info.isReadyRecommended?'var(--success)':med.color}"></div></div>
+        ${trackedPct !== null ? `<div class="metric-group"><div class="metric-label"><span>24h total</span><span>${info.rollingTotal}mg / ${med.maxDaily}mg</span></div><div class="metric-bar"><div class="metric-bar-fill" style="width:${trackedPct}%;background:${trackedPct >= 90 ? 'var(--danger-border)' : trackedPct >= 70 ? 'var(--warn-border)' : 'var(--success)'}"></div></div></div>` : ''}
+        ${supplyPct !== null ? `<div class="metric-group"><div class="metric-label"><span>Supply left</span><span>${supplyRemaining} / ${med.supplyOnHand} ${esc(getSupplyLabel(med))}</span></div><div class="metric-bar"><div class="metric-bar-fill" style="width:${supplyPct}%;background:${supplyTone}"></div></div></div>` : ''}
+        ${med.maxDoses ? `<div class="completion-dots">${Array.from({length:med.maxDoses},(_,i)=>`<span class="cd-dot" style="border-color:${med.color};${i<info.todayCount.length?'background:'+med.color:''}"></span>`).join('')}<span class="cd-label">${info.todayCount.length >= med.maxDoses ? 'All done!' : info.todayCount.length === 0 ? '0 of '+med.maxDoses+' today' : info.todayCount.length+' of '+med.maxDoses+' - '+(med.maxDoses-info.todayCount.length)+' to go'}</span></div>` : `<div class="card-today">Today: ${info.todayTabs} tab${info.todayTabs!==1?'s':''}${info.todayMg?' ('+info.todayMg+'mg)':''}</div>`}
+        ${warnsHtml}
+        ${info.hardBlocked ? '' : `<button class="btn-reminder" onclick="event.stopPropagation();downloadReminder('${med.id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="7"/><path d="M12 9v4l2.5 1.5"/><path d="M5 3L2 6M22 6l-3-3"/></svg>Set Reminder</button>`}
+        <button class="btn-log" style="background:${med.color}" onclick="handleLog('${med.id}')" ${status.canOpenModal ? '' : 'disabled'}>${status.actionLabel}</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function checkAlerts(forceOverdueCheck) {
+  const queue = getNextUpQueue();
+  if (!alertsInitialized) {
+    queue.forEach(item => { prevAvailability[item.med.id] = item.shouldAlert; });
+    alertsInitialized = true;
+    if (forceOverdueCheck) {
+      const overdue = queue.filter(q => q.isOverdue);
+      if (overdue.length > 0) showAlertBanner(overdue[0].med.name + ' is overdue - tap to log', true, overdue[0].med.id);
+    }
+    return;
+  }
+  const newlyAvailable = [];
+  queue.forEach(item => {
+    const wasAvailable = prevAvailability[item.med.id] || false;
+    prevAvailability[item.med.id] = item.shouldAlert;
+    if (item.shouldAlert && !wasAvailable) newlyAvailable.push(item);
+  });
+  if (newlyAvailable.length > 0) {
+    const primary = newlyAvailable[0];
+    showAlertBanner('Time for ' + primary.med.name, false, primary.med.id);
+    playChime();
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+    fireNotification(primary.med.name, false);
+  }
+  if (forceOverdueCheck) {
+    const overdue = queue.filter(q => q.isOverdue);
+    if (overdue.length > 0 && newlyAvailable.length === 0) {
+      showAlertBanner(overdue[0].med.name + ' is overdue - tap to log', true, overdue[0].med.id);
+      playChime();
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
+      fireNotification(overdue[0].med.name, true);
+    }
+  }
+}
+
+function downloadReminder(medId) {
+  const med = getMed(medId);
+  if (!med) return;
+  const info = getMedReadiness(med);
+  if (info.hardBlocked) {
+    const blockText = info.dailyLimitBlocked
+      ? `No reminder set for ${esc(med.name)} because another dose would exceed the 24-hour maximum.`
+      : `No reminder set for ${esc(med.name)} because all doses for today are already logged.`;
+    showModal(`<h3>Reminder unavailable</h3>
+      <p>${blockText}</p>
+      <div class="modal-actions">
+        <button class="btn-confirm" onclick="closeModal()">OK</button>
+      </div>`);
+    return;
+  }
+  let nextTime;
+  if (info.shouldOfferReminder && info.nextEligibleAt) {
+    nextTime = new Date(info.nextEligibleAt);
+  } else if (info.last) {
+    nextTime = new Date(new Date(info.last.time).getTime() + med.intervalMin * 60000);
+    if (nextTime < now()) nextTime = new Date(now().getTime() + 5 * 60000);
+  } else {
+    nextTime = new Date(now().getTime() + 30 * 60000);
+  }
+  const end = new Date(nextTime.getTime() + 5 * 60000);
+  const pad = n => String(n).padStart(2, '0');
+  const icsDate = d => d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + 'T' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+  const ics = [
+    'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//MedTracker//EN',
+    'BEGIN:VEVENT',
+    'UID:' + Date.now() + '-' + medId + '@medtracker',
+    'DTSTART:' + icsDate(nextTime),
+    'DTEND:' + icsDate(end),
+    'SUMMARY:Take ' + med.name + (med.brand ? ' (' + med.brand + ')' : ''),
+    'DESCRIPTION:' + med.dose + ' - ' + med.freq,
+    'BEGIN:VALARM','TRIGGER:-PT0M','ACTION:DISPLAY',
+    'DESCRIPTION:Time for ' + med.name,
+    'END:VALARM',
+    'BEGIN:VALARM','TRIGGER:-PT5M','ACTION:DISPLAY',
+    'DESCRIPTION:' + med.name + ' in 5 minutes',
+    'END:VALARM',
+    'END:VEVENT','END:VCALENDAR'
+  ].join('\r\n');
+  const blob = new Blob([ics], { type: 'text/calendar' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'reminder-' + med.name.toLowerCase().replace(/\s+/g, '-') + '.ics';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function handleLog(medId) {
+  try {
+    const med=getMed(medId);
+    if(!med){console.error('handleLog: unknown med',medId);return;}
+    const info = getMedReadiness(med);
+    if (info.hardBlocked) {
+      const blockText = info.dailyLimitBlocked
+        ? `Another dose would exceed the ${med.maxDaily}mg 24-hour maximum for ${esc(med.name)}.`
+        : `${esc(med.name)} already has all ${med.maxDoses} doses logged for today.`;
+      showModal(`<h3>${esc(med.name)} unavailable</h3>
+        <p>${blockText}</p>
+        <div class="modal-actions">
+          <button class="btn-confirm" onclick="closeModal()">OK</button>
+        </div>`);
+      return;
+    }
+    if(med.conflictsWith) return showConflictModal(med);
+    if(med.trackTotal) return showTrackedModal(med);
+    if(med.maxTabs>1||findPairedMeds(medId).length>0) return showMultiTabModal(med);
+    showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''}</h3>
+      <p>${esc(med.dose)}</p>${buildIntervalWarning(info)}
+      ${renderTimeSelector()}
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+        ${renderScheduledSkipButton(med, info)}
+        <button class="btn-confirm" onclick="confirmSingleDose('${medId}',1)">Confirm</button>
+      </div>`);
+  } catch(e) { console.error('handleLog error:',e); }
+}
+
+function showMultiTabModal(med) {
+  const info = getMedReadiness(med);
+  let tabsHtml='';
+  if(med.maxTabs>1){
+    tabsHtml=`<p style="font-weight:600;margin-bottom:6px">How many tablets?</p><div class="modal-tabs" id="modal-tab-group">`;
+    for(let i=1;i<=med.maxTabs;i++){
+      const active=i===1?'active':'';
+      const mg=i*med.perTab;
+      tabsHtml+=`<button type="button" class="modal-tab ${active}" onclick="selectTab(this,'modal-tab-group',${i})">${i} tab${i>1?'s':''}<span class="sub">${mg}mg</span></button>`;
+    }
+    tabsHtml+='</div>';
+  }
+  const paired=findPairedMeds(med.id);
+  let pairedHtml='';
+  paired.forEach(pm=>{
+    pairedHtml+=`<label class="modal-check"><input type="checkbox" data-paired-med="${pm.id}"> Also log ${esc(pm.name)}${pm.brand?' ('+esc(pm.brand)+')':''} ${esc(pm.dose)} if it was taken now for ${esc(pm.purpose.toLowerCase())}</label>`;
+  });
+  window._modalMedId=med.id;
+  window._modalTabVal=1;
+  showModal(`<h3>Log ${esc(med.name)}</h3>${buildIntervalWarning(info)}
+    ${tabsHtml}${pairedHtml}
+    ${renderTimeSelector()}
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      ${renderScheduledSkipButton(med, info)}
+      <button class="btn-confirm" onclick="confirmMultiTab()">Log Dose</button>
+    </div>`);
+}
+
+function confirmMultiTab() {
+  try {
+    const doseTime = getDoseTime();
+    const pairedMedIds = [...document.querySelectorAll('[data-paired-med]')].filter(cb => cb.checked).map(cb => cb.dataset.pairedMed);
+    const primaryAdded = addDose(window._modalMedId, window._modalTabVal||1, doseTime, {
+      loggedBy: CONFIG.profile?.defaultLoggerName || '',
+      pairedMedIds
+    });
+    if (!primaryAdded) return;
+    pairedMedIds.forEach(pairedMedId => addDose(pairedMedId,1,doseTime, { loggedBy: CONFIG.profile?.defaultLoggerName || '' }));
+    closeModal();
+  } catch(e) { console.error('confirmMultiTab error:',e); closeModal(); }
+}
+
+function showTrackedModal(med) {
+  const info = getMedReadiness(med);
+  const cautionThreshold=med.maxDaily*0.75;
+  const allowedTabs = [];
+  for (let i = 1; i <= med.maxTabs; i++) {
+    if (info.rollingTotal + (i * med.perTab) <= med.maxDaily) allowedTabs.push(i);
+  }
+  const defaultTabs = allowedTabs.includes(2) ? 2 : (allowedTabs[allowedTabs.length - 1] || 1);
+  let tabsHtml='<p style="font-weight:600;margin-bottom:6px">How many tablets?</p><div class="modal-tabs" id="modal-tab-group">';
+  for(let i=1;i<=med.maxTabs;i++){
+    const mg=i*med.perTab;
+    const projected=info.rollingTotal+mg;
+    let warnSpan='';
+    if(projected>med.maxDaily) warnSpan='<span style="color:var(--danger-border)"> (exceeds limit!)</span>';
+    else if(projected>cautionThreshold) warnSpan='<span style="color:var(--warn-border)"> (caution)</span>';
+    const disabled = projected > med.maxDaily;
+    const active=i===defaultTabs&&!disabled?'active':'';
+    tabsHtml+=`<button type="button" class="modal-tab ${active}" onclick="${disabled ? '' : `selectTab(this,'modal-tab-group',${i})`}" ${disabled ? 'disabled' : ''}>${i} tab${i>1?'s':''}<span class="sub">${mg}mg &rarr; ${projected}mg total${warnSpan}</span></button>`;
+  }
+  tabsHtml+='</div>';
+  const maxTabMg=info.rollingTotal+med.maxTabs*med.perTab;
+  const exceedWarn=maxTabMg>med.maxDaily?`<div class="warn-box">Taking ${med.maxTabs} tablets would exceed the ${med.maxDaily}mg daily maximum!</div>`:'';
+  window._modalMedId=med.id;
+  window._modalTabVal=defaultTabs;
+  showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''}</h3>${buildIntervalWarning(info)}
+    ${tabsHtml}
+    ${exceedWarn}
+    <p style="font-size:13px;color:var(--muted)">24hr total so far: ${info.rollingTotal}mg / ${med.maxDaily}mg</p>
+    ${renderTimeSelector()}
+    <div class="modal-actions" style="margin-top:12px">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      ${renderScheduledSkipButton(med, info)}
+      <button class="btn-confirm" onclick="confirmTracked()" ${allowedTabs.length ? '' : 'disabled'}>Log Dose</button>
+    </div>`);
+}
+
+function confirmSingleDose(medId, tabs) {
+  try {
+    const med = getMed(medId);
+    const doseTime = getDoseTime();
+    const info = med ? getMedReadiness(med, doseTime) : null;
+    const added = addDose(medId, tabs||1, doseTime, {
+      loggedBy: CONFIG.profile?.defaultLoggerName || '',
+      overrideType: info && (info.conflictBlocked ? 'conflict' : info.intervalBlocked ? 'early' : ''),
+      overrideReason: info ? info.blockReason : ''
+    });
+    if (added) closeModal();
+  }
+  catch(e) { console.error('confirmSingleDose error:',e); closeModal(); }
+}
+
+function confirmTracked() {
+  try {
+    const med = getMed(window._modalMedId);
+    const tabs = window._modalTabVal||1;
+    if (!med) return closeModal();
+    const doseTime = getDoseTime();
+    const info = getMedReadiness(med, doseTime);
+    const projected = info.rollingTotal + (tabs * med.perTab);
+    if (projected > med.maxDaily) {
+      showModal(`<h3>${esc(med.name)} limit reached</h3>
+        <p>That dose would bring the 24-hour total to ${projected}mg, above the ${med.maxDaily}mg maximum.</p>
+        <div class="modal-actions">
+          <button class="btn-confirm" onclick="closeModal()">OK</button>
+        </div>`);
+      return;
+    }
+    const added = addDose(window._modalMedId, tabs, doseTime, {
+      loggedBy: CONFIG.profile?.defaultLoggerName || '',
+      overrideType: info.intervalBlocked ? 'early' : '',
+      overrideReason: info.blockReason
+    });
+    if (added) closeModal();
+  }
+  catch(e) { console.error('confirmTracked error:',e); closeModal(); }
+}
+
+function showConflictModal(med) {
+  const info = getMedReadiness(med);
+  const confirmLabel = info.canOverride ? 'Log Anyway' : 'Log Dose';
+  const confirmClass = info.canOverride ? 'btn-danger' : 'btn-confirm';
+  showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''} ${esc(med.dose)}</h3>${buildConflictWarning(info)}${buildIntervalWarning(info)}
+    <p>${esc(med.purpose)} &mdash; 1 tablet</p>
+    ${renderTimeSelector()}
+    <div class="modal-actions" style="margin-top:14px">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      ${renderScheduledSkipButton(med, info)}
+      <button class="${confirmClass}" onclick="confirmSingleDose('${med.id}',1)">${confirmLabel}</button>
+    </div>`);
+}
+
+// === Phase 4: Progressive Disclosure ===
+function getRecoveryDay() {
+  if(!CONFIG.eventDate) return -1;
+  return Math.floor((now() - new Date(CONFIG.eventDate + 'T00:00:00')) / 86400000);
+}
+
+let warningsCollapsed = false;
+let logCollapsed = false;
+let nqiSectionCollapsed = false;
+let nqiExpandedMedId = null;
+let _nqiTick = 0;
+
+function toggleWarnings() {
+  warningsCollapsed = !warningsCollapsed;
+  const content = document.getElementById('warnings-content');
+  const chevron = document.getElementById('warn-chevron');
+  const btn = document.getElementById('warn-toggle-btn');
+  content.classList.toggle('collapsed', warningsCollapsed);
+  chevron.classList.toggle('open', !warningsCollapsed);
+  if (btn) btn.setAttribute('aria-expanded', !warningsCollapsed);
+}
+function toggleLog() {
+  logCollapsed = !logCollapsed;
+  const full = document.getElementById('log-full');
+  const chevron = document.getElementById('log-chevron');
+  const h2 = full.parentElement.querySelector('h2');
+  full.classList.toggle('collapsed', logCollapsed);
+  chevron.classList.toggle('open', !logCollapsed);
+  if (h2) h2.setAttribute('aria-expanded', !logCollapsed);
+}
+function toggleNqiSection() {
+  nqiSectionCollapsed = !nqiSectionCollapsed;
+  const wrap = document.getElementById('nqi-queue-wrap');
+  if (wrap) wrap.classList.toggle('collapsed', nqiSectionCollapsed);
+  const btn = document.querySelector('.nqi-section-toggle');
+  if (btn) {
+    btn.setAttribute('aria-expanded', !nqiSectionCollapsed);
+    const chev = btn.querySelector('.chevron');
+    if (chev) chev.classList.toggle('open', !nqiSectionCollapsed);
+  }
+}
+function toggleNqiItem(medId) {
+  nqiExpandedMedId = (nqiExpandedMedId === medId) ? null : medId;
+  try { renderNextUp(); } catch(e) { console.error('renderNextUp:', e); }
+}
+
+// Auto-collapse warnings after day 2
+function initWarningsState() {
+  const day = getRecoveryDay();
+  if (day >= 2 || day < 0) {
+    warningsCollapsed = true;
+    const content = document.getElementById('warnings-content');
+    const chevron = document.getElementById('warn-chevron');
+    const btn = document.getElementById('warn-toggle-btn');
+    if (content) { content.classList.add('collapsed'); }
+    if (chevron) { chevron.classList.remove('open'); }
+    if (btn) { btn.setAttribute('aria-expanded', 'false'); }
+  }
+}
+
+// Recovery phase notes driven by RECOVERY_NOTES.
+function renderRecoveryNote() {
+  const el = document.getElementById('recovery-note');
+  const day = getRecoveryDay();
+  if(day<0){el.innerHTML='';return;} // no event date configured
+  let html = '';
+  for(const note of RECOVERY_NOTES){
+    if(day>=note.minDay&&day<=note.maxDay){
+      html='<div class="recovery-note '+note.noteType+'">'+esc(note.text(day))+'</div>';
+      break;
+    }
+  }
+  el.innerHTML = html;
+}
+
+// Bedside / Night Mode
+function toggleBedside() {
+  const active = document.body.classList.toggle('bedside');
+  const btn = document.getElementById('bedside-btn');
+  btn.classList.toggle('active', active);
+  btn.setAttribute('aria-checked', active);
+  localStorage.setItem(BEDSIDE_KEY, active ? '1' : '0');
+}
+function initBedside() {
+  const saved = localStorage.getItem(BEDSIDE_KEY) || localStorage.getItem(LEGACY_BEDSIDE_KEY);
+  const hour = new Date().getHours();
+  const btn = document.getElementById('bedside-btn');
+  if (saved === '1' || (saved === null && (hour >= 22 || hour < 6))) {
+    document.body.classList.add('bedside');
+    btn.classList.add('active');
+    btn.setAttribute('aria-checked', 'true');
+  }
+}
+// === Settings UI ===
+let _editingMedIndex = -1; // -1 = not editing, -2 = adding new
+function openSettings() {
+  document.getElementById('settings-overlay').classList.add('open');
+  renderSettingsPanel();
+}
+function closeSettings() {
+  document.getElementById('settings-overlay').classList.remove('open');
+  _editingMedIndex = -1;
+}
+function renderPatientSettingsSection() {
+  const profile = CONFIG.profile || shared.createEmptyProfile();
+  return `<div class="settings-section"><h3>Patient</h3>
+    <div class="settings-field"><label>Your Name</label><input type="text" id="cfg-name" value="${esc(CONFIG.patientName)}" placeholder="Leave blank for generic" onchange="updateConfigField('patientName',this.value)"><div class="hint">Shown in the header, handoff summary, and exports.</div></div>
+    <div class="med-form-row">
+      <div class="settings-field"><label>Event Date</label><input type="date" id="cfg-event-date" value="${CONFIG.eventDate||''}" onchange="updateConfigField('eventDate',this.value||null)"></div>
+      <div class="settings-field"><label>Event Label</label><input type="text" id="cfg-event-label" value="${esc(CONFIG.eventLabel)}" placeholder="e.g. Surgery" onchange="updateConfigField('eventLabel',this.value)"></div>
+    </div>
+    <div class="med-form-row">
+      <div class="settings-field"><label>Care Label</label><input type="text" value="${esc(profile.careLabel)}" placeholder="e.g. Post-op recovery" onchange="updateProfileField('careLabel',this.value)"></div>
+      <div class="settings-field"><label>Default Logger Name</label><input type="text" value="${esc(profile.defaultLoggerName)}" placeholder="Who usually logs doses?" onchange="updateProfileField('defaultLoggerName',this.value)"></div>
+    </div>
+    <div class="settings-field"><label>Emergency Contact</label><input type="text" value="${esc(profile.emergencyContact)}" placeholder="Name and phone" onchange="updateProfileField('emergencyContact',this.value)"></div>
+    <div class="med-form-row">
+      <div class="settings-field"><label>Allergies</label><textarea placeholder="One per line" onchange="updateProfileListField('allergies',this.value)">${esc((profile.allergies||[]).join('\n'))}</textarea></div>
+      <div class="settings-field"><label>Conditions</label><textarea placeholder="One per line" onchange="updateProfileListField('conditions',this.value)">${esc((profile.conditions||[]).join('\n'))}</textarea></div>
+    </div>
+    <div class="settings-field"><label>Important Instructions</label><textarea placeholder="What should every caregiver know?" onchange="updateProfileField('importantInstructions',this.value)">${esc(profile.importantInstructions)}</textarea></div>
+  </div>`;
+}
+
+function renderMedicationSettingsSection() {
+  const activeCount = getDisplayMeds().length;
+  let html = `<div class="settings-section"><h3>Medications (${activeCount} active / ${MEDS.length} total)</h3>`;
+  MEDS.forEach((med, i) => {
+    const isActiveToday = shared.isMedActiveOnDate(med);
+    const statusBits = [
+      med.pinned ? 'Pinned' : '',
+      med.archived ? 'Archived' : '',
+      !med.archived && !isActiveToday ? 'Inactive today' : ''
+    ].filter(Boolean).join(' • ');
+    html += `<div class="med-list-item" onclick="editMed(${i})">
+      <div class="med-list-swatch" style="background:${med.color}"></div>
+      <div class="med-list-info"><div class="med-list-name">${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''}</div><div class="med-list-dose">${esc(med.dose)} - ${esc(med.freq)}${statusBits ? ` • ${esc(statusBits)}` : ''}</div></div>
+      <div class="med-list-actions"><button onclick="event.stopPropagation();moveMed(${i},-1)" title="Move up" ${i===0?'disabled':''}>↑</button><button onclick="event.stopPropagation();moveMed(${i},1)" title="Move down" ${i===MEDS.length-1?'disabled':''}>↓</button><button onclick="event.stopPropagation();toggleMedPinned(${i})" title="${med.pinned ? 'Unpin' : 'Pin'}">${med.pinned ? 'Unpin' : 'Pin'}</button><button onclick="event.stopPropagation();toggleMedArchived(${i})" title="${med.archived ? 'Restore' : 'Archive'}">${med.archived ? 'Restore' : 'Archive'}</button><button onclick="event.stopPropagation();deleteMed(${i})" title="Delete">Delete</button></div>
+    </div>`;
+  });
+  if (_editingMedIndex === -2) html += renderMedForm(null);
+  else html += `<button class="btn-add-med" onclick="startAddMed()">+ Add Medication</button>`;
+  if (_editingMedIndex >= 0 && _editingMedIndex < MEDS.length) html += renderMedForm(MEDS[_editingMedIndex]);
+  html += '</div>';
+  return html;
+}
+
+function renderSafetySettingsSection() {
+  let html = `<div class="settings-section"><h3>Safety</h3>
+    <div class="summary-panel" style="margin-bottom:12px"><h3>Guardrails</h3><div class="summary-item">Duplicate doses within ${DUPLICATE_WINDOW_MIN} minutes require confirmation. Conflict and interval warnings stay overrideable, but hard limits remain blocked.</div></div>`;
+  CONFIG.warnings.forEach((warning, index) => {
+    html += `<div class="med-list-item"><div style="flex:1"><strong>${esc(warning.title)}</strong><div style="font-size:13px;color:var(--muted)">${esc(warning.text)}</div></div><button style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:16px;padding:6px" onclick="deleteWarning(${index})" title="Remove">Delete</button></div>`;
+  });
+  html += `<button class="btn-add-med" onclick="addWarning()">+ Add Warning</button></div>`;
+  return html;
+}
+
+function renderDataSettingsSection() {
+  const health = storageHealth || {
+    backend: storageMeta.backend || 'localStorage',
+    persisted: false,
+    usage: null,
+    quota: null,
+    lastSuccessfulBackupAt: storageMeta.lastSuccessfulBackupAt,
+    lastIntegrityCheckAt: storageMeta.lastIntegrityCheckAt,
+    lastSnapshotAt: storageMeta.lastSnapshotAt
+  };
+  return `<div class="settings-section"><h3>Data</h3>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:10px">Back up the full tracker, restore it on another device, and verify whether storage is durable enough for offline use.</p>
+    <div class="storage-health">
+      <div class="storage-tile"><strong>Version</strong><span>${esc(APP_VERSION)}</span></div>
+      <div class="storage-tile"><strong>Backend</strong><span>${esc(String(health.backend || 'localStorage'))}</span></div>
+      <div class="storage-tile"><strong>Persistence</strong><span>${health.persisted ? 'Protected' : 'Best effort'}</span></div>
+      <div class="storage-tile"><strong>Origin</strong><span>${esc(String(health.origin || location.origin))}</span></div>
+      <div class="storage-tile"><strong>Usage</strong><span>${health.usage !== null ? `${formatBytes(health.usage)} / ${formatBytes(health.quota)}` : 'Unknown'}</span></div>
+      <div class="storage-tile"><strong>Integrity Check</strong><span>${health.lastIntegrityCheckAt ? fmt(health.lastIntegrityCheckAt) : 'Not yet'}</span></div>
+      <div class="storage-tile"><strong>Last Snapshot</strong><span>${health.lastSnapshotAt ? fmt(health.lastSnapshotAt) : 'Not yet'}</span></div>
+    </div>
+    <div class="config-share" style="margin-top:12px">
+      <button class="btn-export" onclick="exportConfig()">Copy Setup</button>
+      <button class="btn-import" onclick="showImportField()">Import Setup</button>
+    </div>
+    <div class="config-share">
+      <button class="btn-import" onclick="downloadFullBackup()">Download Backup</button>
+      <button class="btn-import" onclick="showBackupImportField()">Restore Backup</button>
+    </div>
+    <div class="config-share">
+      <button class="btn-import" onclick="downloadSupportBundle()">Support Export</button>
+      <button class="btn-import" onclick="requestPersistentStorage()">Request Storage Protection</button>
+    </div>
+    <div class="config-share">
+      <button class="btn-import" onclick="recoverSnapshot()">Recover Last Snapshot</button>
+      <button class="btn-import" onclick="openHandoffSummary()">Preview Handoff</button>
+    </div>
+    <div id="import-area"></div>
+    <div id="backup-import-area"></div>
+  </div>`;
+}
+
+function renderSettingsPanel() {
+  const panel = document.getElementById('settings-panel');
+  panel.innerHTML = `<div class="settings-header"><h2>Settings</h2><button class="settings-close" onclick="closeSettings()">&times;</button></div>${renderPatientSettingsSection()}${renderMedicationSettingsSection()}${renderSafetySettingsSection()}${renderDataSettingsSection()}`;
+}
+
+function renderMedForm(med) {
+  const isNew = !med;
+  const m = med || { id:'', name:'', brand:'', dose:'', perTab:0, maxTabs:1, purpose:'', reason:'', freq:'', intervalMin:240, color:nextColor(), bgBadge:'#f0f0f0', scheduled:false, scheduleType:'prn', scheduledTimes:[], instructions:'', warns:[], category:'', supplyOnHand:0, refillThreshold:0, supplyLabel:'units', startDate:'', endDate:'', prescriber:'', pharmacy:'', archived:false, pinned:false };
+  const colorOptions = COLOR_PALETTE;
+  return `<div class="med-form"><h3>${isNew?'Add':'Edit'} Medication</h3>
+    <div class="settings-field"><label>Name *</label><input type="text" id="mf-name" value="${esc(m.name)}" placeholder="e.g. Ibuprofen"></div>
+    <div class="med-form-row">
+      <div class="settings-field"><label>Brand</label><input type="text" id="mf-brand" value="${esc(m.brand)}" placeholder="e.g. Advil"></div>
+      <div class="settings-field"><label>Dose Description</label><input type="text" id="mf-dose" value="${esc(m.dose)}" placeholder="e.g. 200mg tabs"></div>
+    </div>
+    <div class="med-form-row">
+      <div class="settings-field"><label>Mg per Tablet</label><input type="number" id="mf-perTab" value="${m.perTab}" min="0"></div>
+      <div class="settings-field"><label>Max Tablets/Dose</label><input type="number" id="mf-maxTabs" value="${m.maxTabs}" min="1"></div>
+    </div>
+    <div class="med-form-row">
+      <div class="settings-field"><label>Interval</label>
+        <select id="mf-interval" onchange="toggleCustomInterval()"><option value="120"${m.intervalMin===120?' selected':''}>Every 2 hours</option><option value="240"${m.intervalMin===240?' selected':''}>Every 4 hours</option><option value="360"${m.intervalMin===360?' selected':''}>Every 6 hours</option><option value="480"${m.intervalMin===480?' selected':''}>Every 8 hours</option><option value="720"${m.intervalMin===720?' selected':''}>Every 12 hours</option><option value="1440"${m.intervalMin===1440?' selected':''}>Once daily</option><option value="custom"${![120,240,360,480,720,1440].includes(m.intervalMin)?' selected':''}>Custom</option></select>
+        <input type="number" id="mf-customInterval" min="1" placeholder="Minutes" value="${![120,240,360,480,720,1440].includes(m.intervalMin)?m.intervalMin:''}" style="margin-top:4px;${[120,240,360,480,720,1440].includes(m.intervalMin)?'display:none':''}">
+      </div>
+      <div class="settings-field"><label>Purpose</label><input type="text" id="mf-purpose" value="${esc(m.purpose)}" placeholder="e.g. Pain Relief"></div>
+    </div>
+    <div class="settings-field"><label>Frequency Description</label><input type="text" id="mf-freq" value="${esc(m.freq)}" placeholder="e.g. 1-2 tabs every 4 hours"></div>
+    <div class="med-form-row">
+      <div class="settings-field"><label>Reason</label><input type="text" id="mf-reason" value="${esc(m.reason||'')}" placeholder="Why is it taken?"></div>
+      <div class="settings-field"><label>Instructions</label><input type="text" id="mf-instructions" value="${esc(m.instructions||'')}" placeholder="Helpful note for caregiver"></div>
+    </div>
+    <div class="settings-field"><label>Color</label><div class="color-swatches">${colorOptions.map(c=>`<div class="color-swatch${resolveColor(m.color)===c?' active':''}" style="background:${c}" onclick="selectMedColor(this,'${c}')"></div>`).join('')}</div></div>
+    <button class="advanced-toggle" onclick="toggleAdvanced()"><span class="chevron" id="adv-chevron">&#9654;</span> Advanced Options</button>
+    <div class="advanced-content" id="adv-content">
+      <div class="med-form-row">
+        <div class="settings-field"><label>Schedule Type</label><select id="mf-scheduled"><option value="0"${!m.scheduled?' selected':''}>PRN / As Needed</option><option value="1"${m.scheduled?' selected':''}>Scheduled</option></select></div>
+        <div class="settings-field"><label>Max Daily Doses</label><input type="number" id="mf-maxDoses" value="${m.maxDoses||0}" min="0" placeholder="0 = unlimited"></div>
+      </div>
+      <div class="settings-field"><label>Scheduled Times (comma separated)</label><input type="text" id="mf-scheduledTimes" value="${esc((m.scheduledTimes||[]).join(', '))}" placeholder="08:00, 12:00, 18:00"></div>
+      <div class="med-form-row">
+        <div class="settings-field"><label>Track 24h Total?</label><select id="mf-trackTotal"><option value="0"${!m.trackTotal?' selected':''}>No</option><option value="1"${m.trackTotal?' selected':''}>Yes</option></select></div>
+        <div class="settings-field"><label>Daily Max (mg)</label><input type="number" id="mf-maxDaily" value="${m.maxDaily||0}" min="0" placeholder="e.g. 4000"></div>
+      </div>
+      <div class="med-form-row">
+        <div class="settings-field"><label>Supply On Hand</label><input type="number" id="mf-supplyOnHand" value="${m.supplyOnHand||0}" min="0" placeholder="How many remain?"></div>
+        <div class="settings-field"><label>Supply Label</label><input type="text" id="mf-supplyLabel" value="${esc(m.supplyLabel||'units')}" placeholder="e.g. tablets"></div>
+      </div>
+      <div class="med-form-row">
+        <div class="settings-field"><label>Refill Threshold</label><input type="number" id="mf-refillThreshold" value="${m.refillThreshold||0}" min="0" placeholder="Alert when at or below"></div>
+        <div class="settings-field"><label></label><div class="hint" style="padding-top:12px">Supply tracking uses the logged quantity, so labels like <strong>tablets</strong> or <strong>capsules</strong> are clearer than <strong>doses</strong>.</div></div>
+      </div>
+      <div class="med-form-row">
+        <div class="settings-field"><label>Paired With</label><select id="mf-pairedWith"><option value="">None</option>${MEDS.filter(x=>x.id!==m.id).map(x=>`<option value="${esc(x.id)}"${m.pairedWith===x.id?' selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
+        <div class="settings-field"><label>Conflicts With</label><select id="mf-conflictsWith"><option value="">None</option>${MEDS.filter(x=>x.id!==m.id).map(x=>`<option value="${esc(x.id)}"${m.conflictsWith===x.id?' selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
+      </div>
+      <div class="med-form-row">
+        <div class="settings-field"><label>Prescriber</label><input type="text" id="mf-prescriber" value="${esc(m.prescriber||'')}" placeholder="Doctor or clinic"></div>
+        <div class="settings-field"><label>Pharmacy</label><input type="text" id="mf-pharmacy" value="${esc(m.pharmacy||'')}" placeholder="Pharmacy name"></div>
+      </div>
+      <div class="med-form-row">
+        <div class="settings-field"><label>Start Date</label><input type="date" id="mf-startDate" value="${esc(m.startDate||'')}"></div>
+        <div class="settings-field"><label>End Date</label><input type="date" id="mf-endDate" value="${esc(m.endDate||'')}"></div>
+      </div>
+      <div class="settings-field"><label>Conflict Wait (minutes)</label><input type="number" id="mf-conflictMin" value="${m.conflictMin||60}" min="0"></div>
+      <div class="settings-field"><label>Warnings (one per line)</label><textarea id="mf-warns" placeholder="e.g. Do not exceed 4000mg in 24 hours">${esc((m.warns||[]).join('\n'))}</textarea></div>
+      <div class="settings-field"><label>Category</label><input type="text" id="mf-category" value="${esc(m.category)}" placeholder="e.g. analgesic"></div>
+      <div class="med-form-row">
+        <div class="settings-field"><label>Pinned</label><select id="mf-pinned"><option value="0"${!m.pinned?' selected':''}>No</option><option value="1"${m.pinned?' selected':''}>Yes</option></select></div>
+        <div class="settings-field"><label>Archived</label><select id="mf-archived"><option value="0"${!m.archived?' selected':''}>No</option><option value="1"${m.archived?' selected':''}>Yes</option></select></div>
+      </div>
+    </div>
+    <div class="med-form-actions">
+      <button class="btn-cancel" onclick="cancelMedForm()">Cancel</button>
+      ${!isNew?'<button class="btn-danger" onclick="deleteMed('+_editingMedIndex+')">Delete</button>':''}
+      <button class="btn-confirm" onclick="saveMedForm(${isNew?-1:_editingMedIndex})">${isNew?'Add':'Save'}</button>
+    </div>
+  </div>`;
+}
+// Map CSS variable colors to hex for comparison (legacy Amanda meds use var(--oxy) etc.)
+const _cssVarMap={'var(--oxy)':'#e74c3c','var(--hyd)':'#e84393','var(--dia)':'#8e44ad','var(--ceph)':'#2980b9','var(--stool)':'#27ae60','var(--tyl)':'#e67e22'};
+function resolveColor(c) { return _cssVarMap[c] || c; }
+function nextColor() {
+  const used = new Set(MEDS.map(m=>resolveColor(m.color)));
+  return COLOR_PALETTE.find(c=>!used.has(c)) || COLOR_PALETTE[MEDS.length % COLOR_PALETTE.length];
+}
+let _selectedMedColor = null;
+function selectMedColor(el, color) {
+  document.querySelectorAll('.color-swatch').forEach(s=>s.classList.remove('active'));
+  el.classList.add('active');
+  _selectedMedColor = color;
+}
+function toggleCustomInterval() {
+  const sel = document.getElementById('mf-interval');
+  const inp = document.getElementById('mf-customInterval');
+  if(sel && inp) { inp.style.display = sel.value==='custom' ? '' : 'none'; }
+}
+function toggleAdvanced() {
+  const content = document.getElementById('adv-content');
+  const chevron = document.getElementById('adv-chevron');
+  content.classList.toggle('open');
+  if(chevron) chevron.style.transform = content.classList.contains('open') ? 'rotate(90deg)' : '';
+}
+function startAddMed() { _editingMedIndex = -2; _selectedMedColor = nextColor(); renderSettingsPanel(); }
+function editMed(i) { _editingMedIndex = i; _selectedMedColor = resolveColor(MEDS[i].color); renderSettingsPanel(); }
+function cancelMedForm() { _editingMedIndex = -1; renderSettingsPanel(); }
+function updateConfigField(field, value) {
+  CONFIG[field] = value;
+  saveConfig(CONFIG);
+  initAppHeader();
+  render();
+}
+function updateProfileField(field, value) {
+  CONFIG.profile = shared.normalizeProfile({
+    ...(CONFIG.profile || {}),
+    [field]: value
+  });
+  saveConfig(CONFIG);
+  render();
+}
+function updateProfileListField(field, value) {
+  updateProfileField(field, String(value || '').split('\n').map(item => item.trim()).filter(Boolean));
+}
+function toggleMedArchived(index) {
+  const med = MEDS[index];
+  if (!med) return;
+  med.archived = !med.archived;
+  CONFIG.meds = MEDS;
+  saveConfig(CONFIG);
+  showToast(`${med.name} ${med.archived ? 'archived' : 'restored'}`);
+  renderSettingsPanel();
+  render();
+}
+function toggleMedPinned(index) {
+  const med = MEDS[index];
+  if (!med) return;
+  med.pinned = !med.pinned;
+  CONFIG.meds = MEDS;
+  saveConfig(CONFIG);
+  showToast(`${med.name} ${med.pinned ? 'pinned' : 'unpinned'}`);
+  renderSettingsPanel();
+  render();
+}
+function moveMed(index, delta) {
+  const target = index + delta;
+  if (index < 0 || target < 0 || index >= MEDS.length || target >= MEDS.length) return;
+  const [item] = MEDS.splice(index, 1);
+  MEDS.splice(target, 0, item);
+  CONFIG.meds = MEDS;
+  saveConfig(CONFIG);
+  renderSettingsPanel();
+  render();
+}
+function clearFieldErrors() {
+  document.querySelectorAll('.field-error').forEach(el=>el.classList.remove('field-error'));
+  document.querySelectorAll('.error-msg').forEach(el=>el.remove());
+}
+function showFieldError(fieldId, msg) {
+  const el = document.getElementById(fieldId);
+  if(el) {
+    el.classList.add('field-error');
+    const err = document.createElement('div');
+    err.className = 'error-msg';
+    err.textContent = msg;
+    el.parentElement.appendChild(err);
+  }
+}
+function saveMedForm(index) {
+  clearFieldErrors();
+  let hasErrors = false;
+  const name = document.getElementById('mf-name').value.trim();
+  if(!name){ showFieldError('mf-name','Name is required'); hasErrors=true; }
+  const perTab = parseFloat(document.getElementById('mf-perTab').value);
+  if(isNaN(perTab)||perTab<0){ showFieldError('mf-perTab','Must be 0 or more'); hasErrors=true; }
+  const maxTabs = parseInt(document.getElementById('mf-maxTabs').value);
+  if(isNaN(maxTabs)||maxTabs<1){ showFieldError('mf-maxTabs','Must be at least 1'); hasErrors=true; }
+  const intervalSelect = document.getElementById('mf-interval');
+  let intervalMin;
+  if(intervalSelect.value==='custom') {
+    intervalMin = parseInt(document.getElementById('mf-customInterval').value);
+    if(isNaN(intervalMin)||intervalMin<=0){ showFieldError('mf-customInterval','Enter interval in minutes (must be > 0)'); hasErrors=true; intervalMin=240; }
+  } else {
+    intervalMin = parseInt(intervalSelect.value);
+    if(isNaN(intervalMin)||intervalMin<=0){ showFieldError('mf-interval','Select a valid interval'); hasErrors=true; intervalMin=240; }
+  }
+  // Validate track total
+  const trackTotal = document.getElementById('mf-trackTotal').value==='1';
+  if(trackTotal) {
+    const maxDaily = parseInt(document.getElementById('mf-maxDaily').value);
+    if(isNaN(maxDaily)||maxDaily<=0){ showFieldError('mf-maxDaily','Daily max required when tracking totals'); hasErrors=true; }
+  }
+  // Validate conflict minutes
+  const conflictsWith = document.getElementById('mf-conflictsWith').value;
+  if(conflictsWith) {
+    const conflictMin = parseInt(document.getElementById('mf-conflictMin').value);
+    if(isNaN(conflictMin)||conflictMin<=0){ showFieldError('mf-conflictMin','Conflict wait must be > 0'); hasErrors=true; }
+  }
+  if(hasErrors) return;
+
+  const color = _selectedMedColor || nextColor();
+  const scheduled = document.getElementById('mf-scheduled').value==='1';
+  const scheduledTimes = document.getElementById('mf-scheduledTimes').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const med = {
+    id: index >= 0 ? MEDS[index].id : (name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/-+$/,'') || 'med-'+Date.now()),
+    name, brand: document.getElementById('mf-brand').value.trim(),
+    dose: document.getElementById('mf-dose').value.trim(),
+    perTab: perTab||0,
+    maxTabs: maxTabs||1,
+    purpose: document.getElementById('mf-purpose').value.trim(),
+    reason: document.getElementById('mf-reason').value.trim(),
+    freq: document.getElementById('mf-freq').value.trim(),
+    instructions: document.getElementById('mf-instructions').value.trim(),
+    intervalMin, color, bgBadge: color+'20',
+    scheduled,
+    scheduleType: scheduled ? 'scheduled' : 'prn',
+    scheduledTimes,
+    warns: document.getElementById('mf-warns').value.split('\n').map(s=>s.trim()).filter(Boolean),
+    category: document.getElementById('mf-category').value.trim(),
+    supplyOnHand: parseInt(document.getElementById('mf-supplyOnHand').value, 10) || 0,
+    refillThreshold: parseInt(document.getElementById('mf-refillThreshold').value, 10) || 0,
+    supplyLabel: document.getElementById('mf-supplyLabel').value.trim() || 'units',
+    prescriber: document.getElementById('mf-prescriber').value.trim(),
+    pharmacy: document.getElementById('mf-pharmacy').value.trim(),
+    startDate: document.getElementById('mf-startDate').value || '',
+    endDate: document.getElementById('mf-endDate').value || '',
+    pinned: document.getElementById('mf-pinned').value==='1',
+    archived: document.getElementById('mf-archived').value==='1'
+  };
+  const maxDoses = parseInt(document.getElementById('mf-maxDoses').value);
+  if(maxDoses > 0) med.maxDoses = maxDoses;
+  if(trackTotal) {
+    med.trackTotal = true;
+    med.maxDaily = parseInt(document.getElementById('mf-maxDaily').value)||0;
+  }
+  const pairedWith = document.getElementById('mf-pairedWith').value;
+  if(pairedWith) med.pairedWith = pairedWith;
+  if(conflictsWith) {
+    med.conflictsWith = conflictsWith;
+    med.conflictMin = parseInt(document.getElementById('mf-conflictMin').value)||60;
+  }
+  // Ensure unique ID for new meds
+  if(index < 0) {
+    let baseId = med.id;
+    let suffix = 1;
+    while(MEDS.some(m=>m.id===med.id)) { med.id = baseId+'-'+suffix++; }
+    MEDS.push(med);
+  } else {
+    med.id = MEDS[index].id; // preserve original ID
+    MEDS[index] = med;
+  }
+  CONFIG.meds = MEDS;
+  saveConfig(CONFIG);
+  _editingMedIndex = -1;
+  showToast(index>=0 ? med.name+' updated' : med.name+' added');
+  renderSettingsPanel();
+  render();
+}
+function openConfirmModal({ title, body, confirmLabel = 'Confirm', confirmClass = 'btn-danger', action }) {
+  window._pendingModalAction = typeof action === 'function' ? action : null;
+  showModal(`<h3>${esc(title)}</h3>
+    <p>${esc(body)}</p>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="${confirmClass}" onclick="confirmPendingAction()">${esc(confirmLabel)}</button>
+    </div>`);
+}
+function confirmPendingAction() {
+  const action = window._pendingModalAction;
+  window._pendingModalAction = null;
+  _modalReturnFocus = null;
+  closeModal();
+  if (typeof action === 'function') action();
+}
+function deleteMed(index) {
+  const med = MEDS[index];
+  if (!med) return;
+  openConfirmModal({
+    title: `Delete ${med.name}?`,
+    body: 'Historical dose entries will be preserved.',
+    confirmLabel: 'Delete Medication',
+    action: () => {
+      const liveIndex = MEDS.findIndex(entry => entry.id === med.id);
+      if (liveIndex === -1) return;
+      MEDS.splice(liveIndex, 1);
+      CONFIG.meds = MEDS;
+      saveConfig(CONFIG);
+      _editingMedIndex = -1;
+      renderSettingsPanel();
+      render();
+      showToast(`${med.name} deleted`);
+    }
+  });
+}
+function addWarning() {
+  showModal(`<h3>Add safety warning</h3>
+    <div class="settings-field"><label>Title</label><input type="text" id="warning-title" placeholder="e.g. No NSAIDs for 2 weeks"></div>
+    <div class="settings-field"><label>Details</label><textarea id="warning-text" rows="3" placeholder="Explain the warning or instruction"></textarea></div>
+    <div class="settings-field"><label>Severity</label><select id="warning-type"><option value="warn">Warning</option><option value="danger">Danger</option></select></div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-confirm" onclick="saveWarning()">Save Warning</button>
+    </div>`);
+  setTimeout(() => {
+    const input = document.getElementById('warning-title');
+    if (input) input.focus();
+  }, 450);
+}
+function saveWarning() {
+  const titleInput = document.getElementById('warning-title');
+  const textInput = document.getElementById('warning-text');
+  const typeInput = document.getElementById('warning-type');
+  const title = titleInput ? titleInput.value.trim() : '';
+  const text = textInput ? textInput.value.trim() : '';
+  const type = typeInput ? typeInput.value : 'warn';
+  if (!title) {
+    showToast('Warning title is required');
+    titleInput?.focus();
+    return;
+  }
+  if (!text) {
+    showToast('Warning details are required');
+    textInput?.focus();
+    return;
+  }
+  CONFIG.warnings.push({ type, title, text });
+  WARNINGS = CONFIG.warnings;
+  saveConfig(CONFIG);
+  renderSettingsPanel();
+  render();
+  closeModal();
+  showToast('Warning added');
+}
+function deleteWarning(index) {
+  const warning = CONFIG.warnings[index];
+  if (!warning) return;
+  openConfirmModal({
+    title: `Remove ${warning.title}?`,
+    body: 'This warning will be removed from the active safety list.',
+    confirmLabel: 'Remove Warning',
+    action: () => {
+      const liveIndex = CONFIG.warnings.findIndex(entry => entry.title === warning.title && entry.text === warning.text);
+      if (liveIndex === -1) return;
+      CONFIG.warnings.splice(liveIndex, 1);
+      WARNINGS = CONFIG.warnings;
+      saveConfig(CONFIG);
+      renderSettingsPanel();
+      render();
+      showToast('Warning removed');
+    }
+  });
+}
+
+// === Config Export/Import ===
+function showToast(msg) {
+  let toast = document.querySelector('.toast');
+  if(!toast) { toast = document.createElement('div'); toast.className='toast'; document.body.appendChild(toast); }
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(toast._tid);
+  toast._tid = setTimeout(()=>toast.classList.remove('show'), 2500);
+}
+function downloadJsonFile(filename, payload) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+async function downloadFullBackup() {
+  const envelope = shared.buildBackupEnvelope({ config: CONFIG, state, meta: storageMeta });
+  storageMeta = shared.createDefaultMeta({ ...storageMeta, lastSuccessfulBackupAt: envelope.exportedAt });
+  await persistBundle('backup-export');
+  downloadJsonFile(`medtracker-backup-${todayStr()}.json`, envelope);
+  renderSettingsPanel();
+  renderCareSummary();
+  showToast('Full backup downloaded');
+}
+function showBackupImportField() {
+  const area = document.getElementById('backup-import-area');
+  if (!area) return;
+  area.innerHTML = `<div class="import-area">
+    <input type="file" id="backup-import-file" accept=".json,application/json,text/plain" onchange="loadBackupImportFile(event)">
+    <textarea id="backup-import-input" placeholder="Paste a full backup JSON file or code here..." rows="5" oninput="previewBackupImport()"></textarea>
+    <div id="backup-import-preview"></div>
+  </div>`;
+}
+async function loadBackupImportFile(event) {
+  const file = event?.target?.files?.[0];
+  const input = document.getElementById('backup-import-input');
+  if (!file || !input) return;
+  try {
+    input.value = await file.text();
+    previewBackupImport();
+    showToast(`Loaded ${file.name}`);
+  } catch (error) {
+    captureError(error, 'backup-file-load');
+    showToast('Could not read backup file');
+  }
+}
+function parseBackupInput(raw) {
+  const input = String(raw || '').trim();
+  if (!input) throw new Error('Backup is empty');
+  try {
+    return shared.parseBackupEnvelope(input);
+  } catch (error) {
+    const decoded = atob(input);
+    return shared.parseBackupEnvelope(decoded);
+  }
+}
+function previewBackupImport() {
+  const input = document.getElementById('backup-import-input');
+  const box = document.getElementById('backup-import-preview');
+  if (!input || !box) return;
+  if (!input.value.trim()) {
+    box.innerHTML = '';
+    return;
+  }
+  try {
+    const { envelope } = parseBackupInput(input.value);
+    const summary = shared.summarizeBundle({ config: envelope.config, state: envelope.state, meta: envelope.meta });
+    box.innerHTML = `<div class="import-preview">
+      <strong>${esc(summary.patientName || 'Unnamed patient')}</strong>
+      <div>${summary.medicationCount} medication(s), ${summary.doseCount} logged dose(s)</div>
+      <div style="margin-top:4px;color:var(--muted)">Exported ${fmt(envelope.exportedAt)}</div>
+      <div class="import-actions">
+        <button class="btn-cancel" onclick="cancelBackupImport()">Cancel</button>
+        <button class="btn-confirm" onclick="applyBackupImport()">Restore Backup</button>
+      </div>
+    </div>`;
+  } catch (error) {
+    box.innerHTML = '<div style="color:var(--danger-border);font-size:13px;margin-top:4px">Invalid backup. Paste the full backup JSON or backup code.</div>';
+  }
+}
+function cancelBackupImport() {
+  const area = document.getElementById('backup-import-area');
+  if (area) area.innerHTML = '';
+}
+async function applyBackupImport() {
+  const input = document.getElementById('backup-import-input');
+  if (!input) return;
+  try {
+    const parsed = parseBackupInput(input.value);
+    const saved = await storageManager.replaceFromBackup(parsed.bundle);
+    applyBundle(saved);
+    storageHealth = await storageManager.getHealth(storageMeta);
+    initAppHeader();
+    renderSettingsPanel();
+    render();
+    cancelBackupImport();
+    showToast('Backup restored');
+  } catch (error) {
+    captureError(error, 'backup-import');
+    showToast('Backup restore failed');
+  }
+}
+function downloadSupportBundle() {
+  const payload = shared.buildSupportPayload({ config: CONFIG, state, meta: storageMeta }, storageHealth, clientErrors);
+  downloadJsonFile(`medtracker-support-${todayStr()}.json`, payload);
+  showToast('Support export downloaded');
+}
+async function requestPersistentStorage() {
+  try {
+    storageMeta = await storageManager.requestPersistence(storageMeta);
+    await persistBundle('request-persistence');
+    renderSettingsPanel();
+    renderCareSummary();
+    showToast(storageMeta.persistentStorageGranted ? 'Storage protection requested' : 'Storage remains best effort');
+  } catch (error) {
+    captureError(error, 'request-persistence');
+    showToast('Storage request failed');
+  }
+}
+async function recoverSnapshot() {
+  try {
+    const saved = await storageManager.recoverSnapshot();
+    if (!saved) {
+      showToast('No snapshot available');
+      return;
+    }
+    applyBundle(saved);
+    storageHealth = await storageManager.getHealth(storageMeta);
+    initAppHeader();
+    renderSettingsPanel();
+    render();
+    showToast('Recovered last snapshot');
+  } catch (error) {
+    captureError(error, 'recover-snapshot');
+    showToast('Snapshot recovery failed');
+  }
+}
+function buildHandoffSummaryText() {
+  const profile = CONFIG.profile || shared.createEmptyProfile();
+  const lines = [];
+  lines.push(`${CONFIG.patientName || 'Patient'} Medication Handoff`);
+  if (profile.careLabel) lines.push(profile.careLabel);
+  if (profile.emergencyContact) lines.push(`Emergency contact: ${profile.emergencyContact}`);
+  if (profile.allergies.length) lines.push(`Allergies: ${profile.allergies.join(', ')}`);
+  if (profile.conditions.length) lines.push(`Conditions: ${profile.conditions.join(', ')}`);
+  if (profile.importantInstructions) lines.push(`Instructions: ${profile.importantInstructions}`);
+  lines.push('');
+  getDisplayMeds().forEach(med => {
+    const info = getMedReadiness(med);
+    const status = getReadinessStatus(info);
+    const supply = shared.getCurrentSupply(med, state);
+    lines.push(`${med.name}: ${status.text}`);
+    lines.push(`  Dose: ${med.dose} | Frequency: ${med.freq}`);
+    if (med.scheduleType === 'scheduled' && med.scheduledTimes?.length) lines.push(`  Scheduled: ${med.scheduledTimes.join(', ')}`);
+    if (info.last) lines.push(`  Last logged: ${fmt(info.last.time)}`);
+    if (supply !== null) lines.push(`  Supply left: ${supply} ${getSupplyLabel(med)}`);
+    if (med.instructions) lines.push(`  Instructions: ${med.instructions}`);
+  });
+  return lines.join('\n');
+}
+function downloadHandoffSummary() {
+  const blob = new Blob([buildHandoffSummaryText()], { type: 'text/plain' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `medtracker-handoff-${todayStr()}.txt`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+function openHandoffSummary() {
+  const profile = CONFIG.profile || shared.createEmptyProfile();
+  const medsHtml = getDisplayMeds().map(med => {
+    const info = getMedReadiness(med);
+    const status = getReadinessStatus(info);
+    const supply = shared.getCurrentSupply(med, state);
+    return `<div class="summary-panel" style="margin-bottom:8px">
+      <h3>${esc(med.name)}</h3>
+      <div class="summary-item"><strong>Status</strong>${esc(status.text)}</div>
+      <div class="summary-item" style="margin-top:6px"><strong>Dose</strong>${esc(med.dose)} • ${esc(med.freq)}</div>
+      ${med.scheduleType === 'scheduled' && med.scheduledTimes?.length ? `<div class="summary-item" style="margin-top:6px"><strong>Scheduled</strong>${esc(med.scheduledTimes.join(', '))}</div>` : ''}
+      ${info.last ? `<div class="summary-item" style="margin-top:6px"><strong>Last logged</strong>${esc(fmt(info.last.time))}</div>` : ''}
+      ${supply !== null ? `<div class="summary-item" style="margin-top:6px"><strong>Supply left</strong>${supply} ${esc(getSupplyLabel(med))}</div>` : ''}
+      ${med.instructions ? `<div class="summary-item" style="margin-top:6px"><strong>Instructions</strong>${esc(med.instructions)}</div>` : ''}
+    </div>`;
+  }).join('');
+  showModal(`<h3>${esc(CONFIG.patientName || 'Patient')} handoff summary</h3>
+    <p>${esc(profile.careLabel || 'Care summary')}</p>
+    ${profile.emergencyContact ? `<div class="warn-box"><strong>Emergency contact:</strong> ${esc(profile.emergencyContact)}</div>` : ''}
+    ${profile.allergies.length ? `<p><strong>Allergies:</strong> ${esc(profile.allergies.join(', '))}</p>` : ''}
+    ${profile.conditions.length ? `<p><strong>Conditions:</strong> ${esc(profile.conditions.join(', '))}</p>` : ''}
+    ${profile.importantInstructions ? `<p><strong>Instructions:</strong> ${esc(profile.importantInstructions)}</p>` : ''}
+    <div style="max-height:45vh;overflow:auto">${medsHtml || '<p>No active medications.</p>'}</div>
+    <div class="modal-actions" style="margin-top:12px">
+      <button class="btn-cancel" onclick="closeModal()">Close</button>
+      <button class="btn-confirm" onclick="downloadHandoffSummary()">Download</button>
+    </div>`);
+}
+function buildMedicationListText() {
+  const profile = CONFIG.profile || shared.createEmptyProfile();
+  const groups = getMedicationGroups();
+  const lines = [];
+  lines.push(`${CONFIG.patientName || 'Patient'} Medication List`);
+  lines.push(`Generated: ${fmt(now())}`);
+  lines.push(`Time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local'}`);
+  if (profile.allergies.length) lines.push(`Allergies: ${profile.allergies.join(', ')}`);
+  if (profile.conditions.length) lines.push(`Conditions: ${profile.conditions.join(', ')}`);
+  if (profile.emergencyContact) lines.push(`Emergency contact: ${profile.emergencyContact}`);
+  if (profile.importantInstructions) lines.push(`Instructions: ${profile.importantInstructions}`);
+  lines.push('');
+  const appendMedGroup = (label, meds) => {
+    if (!meds.length) return;
+    lines.push(label);
+    meds.forEach(med => {
+      const info = getMedReadiness(med);
+      const supply = shared.getCurrentSupply(med, state);
+      const lifecycleLabel = getMedicationLifecycleLabel(med);
+      lines.push(`- ${med.name}${med.brand ? ` (${med.brand})` : ''}: ${med.dose}`);
+      lines.push(`  Purpose: ${med.purpose || med.reason || 'Not set'}`);
+      lines.push(`  Frequency: ${med.freq || 'Not set'}`);
+      if (med.scheduleType === 'scheduled' && med.scheduledTimes?.length) lines.push(`  Scheduled: ${med.scheduledTimes.join(', ')}`);
+      if (info.last) lines.push(`  Last logged: ${fmt(info.last.time)}`);
+      lines.push(`  Next status: ${lifecycleLabel || getReadinessStatus(info).text}`);
+      if (med.instructions) lines.push(`  Instructions: ${med.instructions}`);
+      if (med.prescriber) lines.push(`  Prescriber: ${med.prescriber}`);
+      if (med.pharmacy) lines.push(`  Pharmacy: ${med.pharmacy}`);
+      if (supply !== null) lines.push(`  Supply left: ${supply} ${getSupplyLabel(med)}`);
+    });
+    lines.push('');
+  };
+  appendMedGroup('Active medications', groups.active);
+  appendMedGroup('Inactive medications', groups.inactive);
+  appendMedGroup('Archived medications', groups.archived);
+  return lines.join('\n').trim();
+}
+function downloadMedicationList() {
+  const blob = new Blob([buildMedicationListText()], { type: 'text/plain' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `medtracker-medication-list-${todayStr()}.txt`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+function openMedicationList() {
+  const groups = getMedicationGroups();
+  const renderGroup = (title, meds, emptyText) => `<div class="summary-panel" style="margin-bottom:8px">
+    <h3>${title}</h3>
+    ${meds.length ? meds.map(med => {
+      const info = getMedReadiness(med);
+      const status = getMedicationLifecycleLabel(med) || getReadinessStatus(info).text;
+      const supply = shared.getCurrentSupply(med, state);
+      return `<div class="summary-item" style="margin-bottom:10px">
+        <strong>${esc(med.name)}${med.brand ? ` (${esc(med.brand)})` : ''}</strong>
+        <div>${esc(med.dose)} • ${esc(med.freq || 'No frequency listed')}</div>
+        <div style="margin-top:4px;color:var(--muted)">${esc(status)}</div>
+        ${med.reason ? `<div style="margin-top:4px"><strong>Reason:</strong> ${esc(med.reason)}</div>` : ''}
+        ${med.instructions ? `<div style="margin-top:4px"><strong>Instructions:</strong> ${esc(med.instructions)}</div>` : ''}
+        ${med.scheduleType === 'scheduled' && med.scheduledTimes?.length ? `<div style="margin-top:4px"><strong>Scheduled:</strong> ${esc(med.scheduledTimes.join(', '))}</div>` : ''}
+        ${(med.prescriber || med.pharmacy) ? `<div style="margin-top:4px"><strong>Care team:</strong> ${esc([med.prescriber, med.pharmacy].filter(Boolean).join(' • '))}</div>` : ''}
+        ${supply !== null ? `<div style="margin-top:4px"><strong>Supply:</strong> ${supply} ${esc(getSupplyLabel(med))} left</div>` : ''}
+      </div>`;
+    }).join('') : `<div class="summary-item">${emptyText}</div>`}
+  </div>`;
+  showModal(`<h3>${esc(CONFIG.patientName || 'Patient')} medication list</h3>
+    <p>Use this at appointments, pharmacies, or handoff moments when someone needs the full active list fast.</p>
+    <div style="max-height:45vh;overflow:auto">
+      ${renderGroup('Active medications', groups.active, 'No active medications.')}
+      ${renderGroup('Inactive medications', groups.inactive, 'No inactive medications.')}
+      ${renderGroup('Archived medications', groups.archived, 'No archived medications.')}
+    </div>
+    <div class="modal-actions" style="margin-top:12px">
+      <button class="btn-cancel" onclick="closeModal()">Close</button>
+      <button class="btn-confirm" onclick="downloadMedicationList()">Download</button>
+    </div>`);
+}
+function openDailyReview() {
+  const todayKey = todayStr();
+  const todaysEvents = [...state.doses]
+    .filter(entry => fmt(entry.time, 'date') === todayKey)
+    .sort((a, b) => new Date(b.time) - new Date(a.time));
+  const overrides = todaysEvents.filter(entry => entry.overrideType && entry.overrideType !== 'skip');
+  const skips = todaysEvents.filter(entry => (entry.actionType || 'dose') === 'skip');
+  const lowSupply = getDisplayMeds()
+    .map(med => ({ med, remaining: shared.getCurrentSupply(med, state) }))
+    .filter(entry => entry.remaining !== null && entry.remaining <= (entry.med.refillThreshold || 0));
+  const nextUp = getNextUpQueue().slice(0, 3);
+  const eventHtml = todaysEvents.length ? todaysEvents.map(entry => {
+    const med = getMed(entry.medId);
+    const label = (entry.actionType || 'dose') === 'skip'
+      ? 'Skipped scheduled dose'
+      : `${entry.tabs} tab${entry.tabs === 1 ? '' : 's'}${entry.mg ? ` (${entry.mg}mg)` : ''}`;
+    const auditBits = [entry.loggedBy ? `Logged by ${entry.loggedBy}` : '', entry.overrideType ? `Override ${entry.overrideType}` : '', entry.overrideReason || '', entry.note || ''].filter(Boolean);
+    return `<div class="summary-item" style="margin-bottom:8px">
+      <strong>${esc(med ? med.name : entry.medId)}</strong> • ${esc(label)} • ${esc(fmt(entry.time, 'time'))}
+      ${auditBits.length ? `<div class="card-note">${esc(auditBits.join(' • '))}</div>` : ''}
+    </div>`;
+  }).join('') : '<div class="summary-item">No entries yet today.</div>';
+  showModal(`<h3>Daily review</h3>
+    <p>Fast caregiver summary for what changed today, what was overridden, and what still needs attention.</p>
+    <div class="summary-grid">
+      <div class="summary-panel">
+        <h3>Today</h3>
+        <div class="summary-item"><strong>Entries</strong>${todaysEvents.length}</div>
+        <div class="summary-item" style="margin-top:6px"><strong>Overrides</strong>${overrides.length}</div>
+        <div class="summary-item" style="margin-top:6px"><strong>Skipped doses</strong>${skips.length}</div>
+      </div>
+      <div class="summary-panel">
+        <h3>Needs attention</h3>
+        <div class="summary-item"><strong>Low supply</strong>${lowSupply.length ? lowSupply.map(entry => `${esc(entry.med.name)} (${entry.remaining} ${esc(getSupplyLabel(entry.med))} left)`).join(', ') : 'None'}</div>
+        <div class="summary-item" style="margin-top:6px"><strong>Next up</strong>${nextUp.length ? nextUp.map(entry => `${esc(entry.med.name)}: ${esc(getReadinessStatus(entry).text)}`).join(' | ') : 'Nothing due soon'}</div>
+      </div>
+    </div>
+    <div class="summary-panel" style="margin-top:10px;max-height:32vh;overflow:auto">
+      <h3>Timeline</h3>
+      ${eventHtml}
+    </div>
+    <div class="modal-actions" style="margin-top:12px">
+      <button class="btn-cancel" onclick="closeModal()">Close</button>
+    </div>`);
+}
+function exportConfig() {
+  try {
+    // Export shareable setup, not dose data.
+    const exportData = {
+      _mt:1,
+      patientName: CONFIG.patientName || '',
+      eventDate: CONFIG.eventDate || null,
+      profile: CONFIG.profile || shared.createEmptyProfile(),
+      meds: CONFIG.meds,
+      warnings: CONFIG.warnings,
+      recoveryNotes: CONFIG.recoveryNotes,
+      eventLabel: CONFIG.eventLabel || '',
+      colorPalette: CONFIG.colorPalette || COLOR_PALETTE
+    };
+    const b64 = shared.encodeSetupPayload(exportData);
+    if(navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(b64).then(()=>showToast('Setup copied to clipboard!')).catch(()=>fallbackCopy(b64));
+    } else {
+      fallbackCopy(b64);
+    }
+  } catch(e) { console.error('exportConfig error:', e); showToast('Export failed'); }
+}
+function fallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText='position:fixed;opacity:0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); showToast('Setup copied to clipboard!'); }
+  catch(e) { showToast('Copy failed - try manually'); }
+  document.body.removeChild(ta);
+}
+function showImportField() {
+  const area = document.getElementById('import-area');
+  area.innerHTML = `<div class="import-area">
+    <textarea id="import-input" placeholder="Paste the setup code here..." rows="3" oninput="previewImport()"></textarea>
+    <div id="import-preview-box"></div>
+  </div>`;
+  setTimeout(()=>{const el=document.getElementById('import-input');if(el)el.focus();},50);
+}
+function previewImport() {
+  const input = document.getElementById('import-input');
+  const box = document.getElementById('import-preview-box');
+  if(!input||!box) return;
+  const raw = input.value.trim();
+  if(!raw){box.innerHTML='';return;}
+  try {
+    const data = shared.decodeSetupPayload(raw);
+    if(!data._mt || !Array.isArray(data.meds)) throw new Error('Invalid format');
+    const patientBits = [data.patientName || '', data.profile?.careLabel || ''].filter(Boolean).join(' • ');
+    box.innerHTML = `<div class="import-preview">
+      <strong>Found ${data.meds.length} medication${data.meds.length!==1?'s':''}:</strong>
+      ${patientBits ? `<div style="margin-top:4px;color:var(--muted)">${esc(patientBits)}</div>` : ''}
+      ${data.meds.map(m=>`<div style="display:flex;align-items:center;gap:6px;margin:4px 0"><span style="width:10px;height:10px;border-radius:50%;background:${esc(shared.sanitizeImportedColor(m.color,'#999'))}"></span>${esc(m.name)} (${esc(m.dose)})</div>`).join('')}
+      ${Array.isArray(data.warnings) && data.warnings.length ? '<div style="margin-top:4px;color:var(--muted)">'+data.warnings.length+' warning(s)</div>' : ''}
+      <div class="import-actions">
+        <button class="btn-cancel" onclick="cancelImport()">Cancel</button>
+        <button class="btn-confirm" onclick="applyImport()">Apply This Setup</button>
+      </div>
+    </div>`;
+  } catch(e) {
+    box.innerHTML = '<div style="color:var(--danger-border);font-size:13px;margin-top:4px">Invalid setup code. Make sure you pasted the full text.</div>';
+  }
+}
+function cancelImport() {
+  const area = document.getElementById('import-area');
+  if(area) area.innerHTML = '';
+}
+function applyImport() {
+  const input = document.getElementById('import-input');
+  if(!input) return;
+  try {
+    const data = shared.decodeSetupPayload(input.value.trim());
+    if(!data._mt || !Array.isArray(data.meds)) throw new Error('Invalid');
+    data.meds.forEach(m=>{ m.color=shared.sanitizeImportedColor(m.color); m.bgBadge=shared.sanitizeImportedColor(m.bgBadge,'#f0f0f0'); });
+    if (typeof data.patientName === 'string') CONFIG.patientName = data.patientName;
+    if (Object.prototype.hasOwnProperty.call(data, 'eventDate')) CONFIG.eventDate = data.eventDate || null;
+    if (data.profile) CONFIG.profile = shared.createEmptyProfile(data.profile);
+    CONFIG.meds = data.meds;
+    CONFIG.warnings = data.warnings || [];
+    CONFIG.recoveryNotes = data.recoveryNotes || [];
+    if(data.eventLabel) CONFIG.eventLabel = data.eventLabel;
+    MEDS = CONFIG.meds;
+    WARNINGS = CONFIG.warnings;
+    RECOVERY_NOTES = (CONFIG.recoveryNotes||[]).filter(n=>n&&n.text).map(n=>({
+      ...n, text: typeof n.text === 'function' ? n.text : day => (n.text||'').replace('{day}', day)
+    }));
+    saveConfig(CONFIG);
+    showToast('Setup imported - '+data.meds.length+' meds loaded!');
+    renderSettingsPanel();
+    initAppHeader();
+    render();
+  } catch(e) { showToast('Import failed - invalid code'); }
+}
+
+// === First-Run Experience ===
+const TEMPLATES = shared.getTemplates();
+
+let _welcomeStep = 1;
+let _welcomeName = '';
+function showWelcome() {
+  const overlay = document.getElementById('welcome-overlay');
+  overlay.style.display = 'flex';
+  renderWelcomeStep();
+}
+function renderWelcomeStep() {
+  const overlay = document.getElementById('welcome-overlay');
+  if (_welcomeStep === 1) {
+    overlay.innerHTML = `<div class="welcome-card">
+      <h2>Welcome to Med Tracker</h2>
+      <p>Keep track of medications, dosing intervals, and daily limits, all on your phone.</p>
+      <input type="text" id="welcome-name" value="${esc(_welcomeName)}" placeholder="Your name (optional)" onkeydown="if(event.key==='Enter')welcomeNext()">
+      <button class="welcome-btn" onclick="welcomeNext()">Get Started</button>
+    </div>`;
+    setTimeout(()=>{const el=document.getElementById('welcome-name');if(el)el.focus();},100);
+  } else if (_welcomeStep === 2) {
+    overlay.innerHTML = `<div class="welcome-card">
+      <h2>Choose a Starting Point</h2>
+      <p>You can always customize medications later in Settings.</p>
+      <div class="welcome-templates">
+        ${Object.entries(TEMPLATES).map(([key,tpl])=>`<div class="welcome-tpl" onclick="selectTemplate('${key}')"><strong>${tpl.label}</strong><span>${tpl.description}</span></div>`).join('')}
+      </div>
+    </div>`;
+  }
+}
+function welcomeNext() {
+  const nameInput = document.getElementById('welcome-name');
+  _welcomeName = nameInput ? nameInput.value.trim() : '';
+  _welcomeStep = 2;
+  renderWelcomeStep();
+}
+function selectTemplate(key) {
+  const tpl = TEMPLATES[key];
+  if (!tpl) return;
+  if (key === 'restore') {
+    document.getElementById('welcome-overlay').style.display = 'none';
+    openSettings();
+    showBackupImportField();
+    return;
+  }
+  const templateConfig = tpl.buildConfig ? tpl.buildConfig() : shared.createDefaultConfig();
+  CONFIG.patientName = _welcomeName;
+  CONFIG.meds = templateConfig.meds.map(m=>({...m}));
+  CONFIG.warnings = templateConfig.warnings.map(w=>({...w}));
+  CONFIG.recoveryNotes = templateConfig.recoveryNotes.map(n=>({...n}));
+  CONFIG.profile = shared.normalizeProfile({
+    ...(templateConfig.profile || {}),
+    defaultLoggerName: CONFIG.profile?.defaultLoggerName || templateConfig.profile?.defaultLoggerName || '',
+    careLabel: templateConfig.profile?.careLabel || CONFIG.profile?.careLabel || ''
+  });
+  if(key === 'post-surgery') {
+    CONFIG.eventDate = CONFIG.eventDate || templateConfig.eventDate || null;
+    CONFIG.eventLabel = templateConfig.eventLabel || 'Surgery';
+  }
+  refreshDerivedConfig();
+  saveConfig(CONFIG);
+  // Close welcome
+  document.getElementById('welcome-overlay').style.display = 'none';
+  initAppHeader();
+  render();
+}
+
+// Check for first-run
+let _isFirstRun = !localStorage.getItem(CONFIG_KEY) && !localStorage.getItem(LEGACY_STATE_KEY);
+
+// Dynamic header based on config
+function initAppHeader() {
+  const title = (CONFIG.patientName ? CONFIG.patientName+"'s" : 'My') + ' Med Tracker';
+  document.title = title;
+  const h1 = document.getElementById('app-title');
+  if(h1) h1.textContent = title;
+  const appleTitle = document.getElementById('apple-title');
+  if(appleTitle) appleTitle.setAttribute('content', CONFIG.patientName ? CONFIG.patientName+"'s Meds" : 'Med Tracker');
+  const eventInfo = document.getElementById('event-info');
+  if(eventInfo) {
+    if(CONFIG.eventDate) {
+      const d=new Date(CONFIG.eventDate+'T00:00:00');
+      const formatted=d.toLocaleDateString([],{month:'long',day:'numeric',year:'numeric'});
+      eventInfo.textContent=(CONFIG.eventLabel||'Event')+': '+formatted;
+    } else {
+      eventInfo.textContent='';
+    }
+  }
+}
+async function initApp() {
+  try {
+    const hadExistingData = !!localStorage.getItem(CONFIG_KEY) || !!localStorage.getItem(LEGACY_STATE_KEY);
+    const bundle = await storageManager.loadBundle();
+    applyBundle(bundle);
+    storageHealth = await storageManager.getHealth(storageMeta);
+    _isFirstRun = !hadExistingData && !CONFIG.patientName && !CONFIG.meds.length && !state.doses.length;
+  } catch (error) {
+    captureError(error, 'init-app');
+  }
+  initAppHeader();
+  initBedside();
+  initWarningsState();
+  positionAlertBanner();
+  if (_isFirstRun) showWelcome();
+  render();
+}
+
+window.addEventListener('resize', positionAlertBanner);
+initApp();
+
+// Midnight rollover detection: full re-render when the day changes.
+let _lastRenderDay = todayStr();
+
+// Timer loop: isolate failures so one update path does not break the interval.
+setInterval(()=>{
+  // If the day changed (midnight rollover), do a full re-render to reset card counts, completion dots, etc.
+  try {
+    const currentDay = todayStr();
+    if (currentDay !== _lastRenderDay) {
+      _lastRenderDay = currentDay;
+      render();
+      return; // full render already updated everything
+    }
+  } catch(e) {}
+  try{renderClock();}catch(e){}
+  try{renderDayCounter();}catch(e){}
+  try{renderTrackedTotals();}catch(e){}
+  if(++_nqiTick % 10 === 0){try{renderNextUp();}catch(e){}}
+  // Update status text on cards without full re-render
+  try{
+    document.querySelectorAll('.card[data-med-id]').forEach(card=>{
+      const med=getMed(card.getAttribute('data-med-id')); if(!med || !shared.isMedActiveOnDate(med)) return;
+      const info=getMedReadiness(med);
+      const status=getReadinessStatus(info);
+      const statusEl=card.querySelector('.card-status');
+      const timerEl=card.querySelector('.card-timer');
+      const fillEl=card.querySelector('.timer-fill');
+      const logBtn=card.querySelector('.btn-log');
+      if(statusEl){
+        statusEl.innerHTML=`<span class="dot ${status.dot}"></span>${status.text}`;
+      }
+      if(timerEl) timerEl.textContent=info.last?`Last: ${fmt(info.last.time,'time')} (${minsToHM(info.ago)} ago)`:'No doses logged yet';
+      if(fillEl){fillEl.style.width=info.progressPct+'%';fillEl.style.background=info.isReadyRecommended?_cssSuccess:med.color;}
+      if(logBtn){
+        logBtn.textContent=status.actionLabel;
+        logBtn.disabled=!status.canOpenModal;
+      }
+    });
+  }catch(e){}
+},1000);
+
+// Init
+Object.assign(window, {
+  addDose,
+  addWarning,
+  applyImport,
+  applyBackupImport,
+  cancelImport,
+  cancelBackupImport,
+  cancelMedForm,
+  closeModal,
+  closeSettings,
+  confirmClearAllData,
+  confirmPendingAction,
+  confirmDuplicateDose,
+  confirmMultiTab,
+  confirmSingleDose,
+  confirmTracked,
+  deleteMed,
+  deleteWarning,
+  dismissAlertBanner,
+  downloadFullBackup,
+  downloadMedicationList,
+  downloadReminder,
+  downloadSupportBundle,
+  downloadHandoffSummary,
+  editMed,
+  exportConfig,
+  handleClear,
+  handleEditDose,
+  handleExport,
+  handleLog,
+  handleRemove,
+  loadBackupImportFile,
+  moveMed,
+  openDailyReview,
+  openHandoffSummary,
+  openMedicationList,
+  onCustomTimeChange,
+  openSettings,
+  previewBackupImport,
+  previewImport,
+  recoverSnapshot,
+  removeDose,
+  requestPersistentStorage,
+  saveWarning,
+  saveEditedDose,
+  saveMedForm,
+  selectMedColor,
+  selectTab,
+  selectTemplate,
+  selectTimeChip,
+  showBackupImportField,
+  showCustomTime,
+  showImportField,
+  skipScheduledDose,
+  startAddMed,
+  toggleAdvanced,
+  toggleBedside,
+  toggleCustomInterval,
+  toggleLog,
+  toggleMedArchived,
+  toggleMedPinned,
+  toggleNqiItem,
+  toggleNqiSection,
+  toggleWarnings,
+  updateConfigField,
+  updateProfileField,
+  updateProfileListField,
+  undoLastDose,
+  welcomeNext
+});
+
+
+

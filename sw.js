@@ -1,7 +1,10 @@
-const CACHE_NAME = 'medtracker-v17';
+const CACHE_NAME = 'medtracker-v18';
 const ASSETS = [
   '/',
   '/index.html',
+  '/app/main.js',
+  '/app/shared.js',
+  '/app/storage.js',
   '/manifest.json',
   '/icon.svg'
 ];

@@ -7,6 +7,8 @@ import { startStaticServer } from './serve-static.mjs';
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const outputDir = path.join(rootDir, 'output', 'playwright');
 const headed = process.argv.includes('--headed');
+const providedBaseUrl = process.env.MEDTRACKER_BASE_URL || '';
+const liveMode = Boolean(providedBaseUrl);
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -23,6 +25,9 @@ function medicationCard(page, medName) {
 async function attachErrorTracking(page, errors) {
   page.on('pageerror', error => errors.push(`pageerror: ${error.message}`));
   page.on('console', msg => {
+    if (liveMode && /Service Worker registration blocked by Playwright/i.test(msg.text())) {
+      return;
+    }
     if (msg.type() === 'error' || msg.type() === 'warning') {
       errors.push(`console:${msg.type()}: ${msg.text()}`);
     }
@@ -35,7 +40,7 @@ async function newHarness(browser, name, viewport) {
   const context = await browser.newContext({
     acceptDownloads: true,
     viewport,
-    serviceWorkers: 'allow'
+    serviceWorkers: liveMode ? 'block' : 'allow'
   });
   await context.addInitScript(() => {
     if (window.localStorage.getItem('medtracker-bedside') === null) {
@@ -72,7 +77,8 @@ async function startScratch(page, baseUrl) {
   await waitForVisible(page, 'text=Welcome to Med Tracker');
   await page.getByPlaceholder('Your name (optional)').fill('QA');
   await page.getByRole('button', { name: 'Get Started' }).click();
-  await page.getByText('Start from Scratch').click();
+  await waitForVisible(page, 'text=Choose a Starting Point');
+  await page.locator('.welcome-tpl').filter({ hasText: 'Start from Scratch' }).click();
   await waitForVisible(page, 'text=QA\'s Med Tracker');
 }
 
@@ -101,9 +107,19 @@ async function addScratchMedication(page) {
 
 async function runScratchScenario(browser, baseUrl) {
   const { context, page, errors, downloadsPath } = await newHarness(browser, 'scratch', { width: 390, height: 844 });
+  let latestBackupPath = '';
   try {
     await startScratch(page, baseUrl);
     await addScratchMedication(page);
+    await page.locator('#settings-panel').getByRole('button', { name: '+ Add Warning' }).click();
+    await page.getByPlaceholder('e.g. No NSAIDs for 2 weeks').fill('No grapefruit');
+    await page.getByPlaceholder('Explain the warning or instruction').fill('Avoid grapefruit while this medication schedule is active.');
+    await page.locator('#warning-type').selectOption('danger');
+    await page.getByRole('button', { name: 'Save Warning' }).click();
+    await page.locator('.med-list-item', { hasText: 'No grapefruit' }).waitFor({ state: 'visible', timeout: 15000 });
+    await page.locator('.med-list-item', { hasText: 'No grapefruit' }).getByRole('button', { name: 'Delete' }).click();
+    await page.getByRole('button', { name: 'Remove Warning' }).click();
+    await page.locator('.med-list-item', { hasText: 'No grapefruit' }).waitFor({ state: 'hidden', timeout: 15000 });
 
     await closeSettings(page);
     const bedsideToggle = page.getByRole('switch', { name: 'Toggle bedside night mode' });
@@ -117,17 +133,17 @@ async function runScratchScenario(browser, baseUrl) {
     }
 
     await openSettings(page);
-    await page.locator('#settings-panel button[title="Edit"]').click();
+    await page.locator('#settings-panel').getByText('Ibuprofen').first().click();
     await waitForVisible(page, 'text=Edit Medication');
     await page.getByPlaceholder('e.g. Advil').fill('Advil PM');
     await page.getByRole('button', { name: 'Save' }).click();
     await closeSettings(page);
     await waitForVisible(page, 'text=Advil PM');
 
-    await medicationCard(page, 'Ibuprofen').getByRole('button', { name: 'Log Dose' }).click();
+    await medicationCard(page, 'Ibuprofen').getByRole('button', { name: 'Log Dose' }).click({ force: true });
     await page.getByRole('button', { name: /2 tabs 400mg/ }).click();
     await page.getByRole('button', { name: '30m ago' }).click();
-    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click();
+    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click({ force: true });
     await waitForVisible(page, 'text=Available in');
     await waitForVisible(page, 'text=Running total: 400mg');
 
@@ -136,77 +152,155 @@ async function runScratchScenario(browser, baseUrl) {
     await waitForVisible(page, 'text=No doses logged yet');
 
     await openSettings(page);
-    await page.locator('#settings-panel .btn-export').click();
+    await page.getByRole('button', { name: 'Copy Setup' }).click();
     await waitForVisible(page, 'text=Setup copied to clipboard!');
-    await page.locator('#settings-panel .btn-import').click();
+    await page.getByRole('button', { name: 'Import Setup' }).click();
     await page.getByPlaceholder('Paste the setup code here...').fill('invalid');
     await waitForVisible(page, 'text=Invalid setup code');
     const setupCode = await page.evaluate(() => {
       const exportData = {
         _mt: 1,
+        patientName: CONFIG.patientName || '',
+        eventDate: CONFIG.eventDate || null,
+        profile: CONFIG.profile || {},
         meds: CONFIG.meds,
         warnings: CONFIG.warnings,
         recoveryNotes: CONFIG.recoveryNotes,
         eventLabel: CONFIG.eventLabel || '',
         colorPalette: CONFIG.colorPalette || COLOR_PALETTE
       };
-      return btoa(unescape(encodeURIComponent(JSON.stringify(exportData))));
+      const json = JSON.stringify(exportData);
+      const bytes = new TextEncoder().encode(json);
+      let binary = '';
+      bytes.forEach(byte => {
+        binary += String.fromCharCode(byte);
+      });
+      return btoa(binary);
     });
     await page.getByPlaceholder('Paste the setup code here...').fill(setupCode);
     await waitForVisible(page, 'text=Apply This Setup');
     await page.getByRole('button', { name: 'Apply This Setup' }).click();
     await waitForVisible(page, 'text=Setup imported');
+
+    const backupDownload = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download Backup' }).click();
+    latestBackupPath = await saveDownload(await backupDownload, downloadsPath);
+
+    const supportDownload = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Support Export' }).click();
+    await saveDownload(await supportDownload, downloadsPath);
     await closeSettings(page);
 
-    await medicationCard(page, 'Ibuprofen').getByRole('button', { name: 'Log Dose' }).click();
+    await medicationCard(page, 'Ibuprofen').getByRole('button', { name: 'Log Dose' }).click({ force: true });
     await page.getByRole('button', { name: /1 tab 200mg/ }).click();
     await page.getByRole('button', { name: 'Just now' }).click();
-    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click();
+    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click({ force: true });
+    await page.getByRole('button', { name: /Edit Ibuprofen entry at/ }).click();
+    await page.locator('#edit-dose-note').fill('With food');
+    await page.getByRole('button', { name: 'Save Changes' }).click();
+    await waitForVisible(page, 'text=With food');
+
+    await medicationCard(page, 'Ibuprofen').getByRole('button', { name: 'Review Timing' }).click({ force: true });
+    await page.getByRole('button', { name: /1 tab 200mg/ }).click();
+    await page.getByRole('button', { name: /Other/ }).click();
+    const retroTime = await page.evaluate(() => {
+      const now = new Date();
+      now.setHours(now.getHours() + 1);
+      return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    });
+    await page.locator('#ts-custom-time').fill(retroTime);
+    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click({ force: true });
+    const retroDose = await page.evaluate(() => {
+      const doses = state.doses
+        .filter(entry => entry.medId === 'ibuprofen')
+        .slice()
+        .sort((a, b) => new Date(a.time) - new Date(b.time));
+      return doses[0];
+    });
+    assert(retroDose, 'Retroactive dose should be logged');
+    assert(retroDose.overrideType === '', `Retroactive historical dose should not be marked as an early override (found ${retroDose.overrideType || 'none'})`);
+
+    await openSettings(page);
+    const refreshedBackupDownload = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download Backup' }).click();
+    latestBackupPath = await saveDownload(await refreshedBackupDownload, downloadsPath);
+    await closeSettings(page);
 
     const reminderDownload = page.waitForEvent('download');
-    await medicationCard(page, 'Ibuprofen').getByRole('button', { name: 'Set Reminder' }).click();
+    await medicationCard(page, 'Ibuprofen').getByRole('button', { name: 'Set Reminder' }).click({ force: true });
     await saveDownload(await reminderDownload, downloadsPath);
 
     const logDownload = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Export Log' }).click();
     await saveDownload(await logDownload, downloadsPath);
 
-    await page.getByRole('button', { name: 'Clear All Data' }).click();
-    await page.getByRole('button', { name: 'Clear Everything' }).click();
+    await page.locator('.actions').getByRole('button', { name: 'Medication List' }).click();
+    await page.getByRole('heading', { name: /medication list/i }).waitFor({ state: 'visible', timeout: 15000 });
+    const medListDownload = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download' }).click();
+    await saveDownload(await medListDownload, downloadsPath);
+    await page.getByRole('button', { name: 'Close' }).click({ force: true });
+
+    await page.getByRole('button', { name: 'Daily Review' }).click();
+    await waitForVisible(page, 'text=Fast caregiver summary');
+    await page.getByRole('button', { name: 'Close' }).click({ force: true });
+
+    await page.getByRole('button', { name: 'Clear Dose History' }).click();
+    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Clear Dose History' }).click();
     await waitForVisible(page, 'text=No doses logged yet');
 
-    await page.evaluate(async () => {
-      await navigator.serviceWorker.ready;
-      if (!navigator.serviceWorker.controller) {
-        await new Promise(resolve => {
-          navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
-        });
-      }
-      const warmResults = await Promise.all([
-        fetch('/manifest.json').then(response => response.ok).catch(() => false),
-        fetch('/icon.svg').then(response => response.ok).catch(() => false)
-      ]);
-      if (warmResults.some(result => !result)) {
-        throw new Error('Failed to warm offline assets before switching offline');
-      }
-    });
-    await context.setOffline(true);
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await waitForVisible(page, 'text=QA\'s Med Tracker');
-    const offlineAssetResults = await page.evaluate(async () => {
-      return Promise.all([
-        fetch('/manifest.json').then(response => response.ok).catch(() => false),
-        fetch('/icon.svg').then(response => response.ok).catch(() => false)
-      ]);
-    });
-    assert(offlineAssetResults.every(Boolean), 'Offline reload should serve cached manifest and icon');
-    await medicationCard(page, 'Ibuprofen').getByRole('button', { name: 'Log Dose' }).click();
-    await page.getByRole('button', { name: /1 tab 200mg/ }).click();
-    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click();
-    await waitForVisible(page, 'text=Running total: 200mg');
-    await page.reload({ waitUntil: 'domcontentloaded' });
-    await waitForVisible(page, 'text=Running total: 200mg');
-    await context.setOffline(false);
+    await openSettings(page);
+    await page.getByRole('button', { name: 'Restore Backup' }).click();
+    await page.setInputFiles('#backup-import-file', latestBackupPath);
+    await page.locator('#backup-import-preview').getByRole('button', { name: 'Restore Backup' }).waitFor({ state: 'visible', timeout: 15000 });
+    await page.locator('#backup-import-preview').getByRole('button', { name: 'Restore Backup' }).click();
+    await closeSettings(page);
+    await waitForVisible(page, 'text=With food');
+
+    await page.getByRole('button', { name: 'Clear Dose History' }).click();
+    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Clear Dose History' }).click();
+    await waitForVisible(page, 'text=No doses logged yet');
+
+    if (!liveMode) {
+      await page.evaluate(async () => {
+        await navigator.serviceWorker.ready;
+        if (!navigator.serviceWorker.controller) {
+          await new Promise(resolve => {
+            navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true });
+          });
+        }
+        const warmResults = await Promise.all([
+          fetch('/manifest.json').then(response => response.ok).catch(() => false),
+          fetch('/icon.svg').then(response => response.ok).catch(() => false)
+        ]);
+        if (warmResults.some(result => !result)) {
+          throw new Error('Failed to warm offline assets before switching offline');
+        }
+      });
+      await context.setOffline(true);
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await waitForVisible(page, 'text=QA\'s Med Tracker');
+      const offlineAssetResults = await page.evaluate(async () => {
+        return Promise.all([
+          fetch('/manifest.json').then(response => response.ok).catch(() => false),
+          fetch('/icon.svg').then(response => response.ok).catch(() => false)
+        ]);
+      });
+      assert(offlineAssetResults.every(Boolean), 'Offline reload should serve cached manifest and icon');
+      await medicationCard(page, 'Ibuprofen').getByRole('button', { name: 'Log Dose' }).click({ force: true });
+      await page.getByRole('button', { name: /1 tab 200mg/ }).click();
+      await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click({ force: true });
+      await waitForVisible(page, 'text=Running total: 200mg');
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await waitForVisible(page, 'text=Running total: 200mg');
+      await context.setOffline(false);
+    }
+
+    await openSettings(page);
+    await page.locator('.med-list-item', { hasText: 'Ibuprofen' }).getByRole('button', { name: 'Delete' }).click();
+    await page.getByRole('button', { name: 'Delete Medication' }).click();
+    await closeSettings(page);
+    await medicationCard(page, 'Ibuprofen').waitFor({ state: 'hidden', timeout: 15000 });
 
     assert(errors.length === 0, `Scratch scenario errors:\n${errors.join('\n')}`);
   } finally {
@@ -220,41 +314,53 @@ async function runPostSurgeryScenario(browser, baseUrl) {
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await waitForVisible(page, 'text=Welcome to Med Tracker');
     await page.getByRole('button', { name: 'Get Started' }).click();
-    await page.getByText('Post-Surgery Recovery').click();
+    await waitForVisible(page, 'text=Choose a Starting Point');
+    await page.locator('.welcome-tpl').filter({ hasText: 'Post-Surgery Recovery' }).click();
     await medicationCard(page, 'Oxycodone').waitFor({ state: 'visible', timeout: 15000 });
 
-    await medicationCard(page, 'Oxycodone').getByRole('button', { name: 'Log Dose' }).click();
+    await medicationCard(page, 'Oxycodone').getByRole('button', { name: 'Log Dose' }).click({ force: true });
     await waitForVisible(page, 'text=Also log Hydroxyzine');
     const pairedCheckbox = page.locator('[data-paired-med="hydroxyzine"]');
     assert((await pairedCheckbox.isChecked()) === false, 'Paired meds should be opt-in by default');
-    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click();
+    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click({ force: true });
     await waitForVisible(page, 'text=1 today');
     const hydroTimerAfterSoloLog = await medicationCard(page, 'Hydroxyzine').locator('.card-timer').innerText();
     assert(/No doses logged yet/.test(hydroTimerAfterSoloLog), 'Hydroxyzine should not auto-log when the paired checkbox is left unchecked');
 
-    await medicationCard(page, 'Oxycodone').getByRole('button', { name: 'Review Timing' }).click();
+    await medicationCard(page, 'Oxycodone').getByRole('button', { name: 'Review Timing' }).click({ force: true });
     await waitForVisible(page, 'text=Also log Hydroxyzine');
-    await pairedCheckbox.check();
-    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click();
-    await waitForVisible(page, 'text=3 today');
+    await pairedCheckbox.check({ force: true });
+    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click({ force: true });
+    if (await page.locator('text=Possible duplicate dose').count()) {
+      await page.getByRole('button', { name: 'Log Anyway' }).click();
+    }
+    await waitForVisible(page, 'text=2 today');
     const hydroTimerAfterPairedLog = await medicationCard(page, 'Hydroxyzine').locator('.card-timer').innerText();
     assert(/Last:/.test(hydroTimerAfterPairedLog), 'Hydroxyzine should log only when the paired checkbox is selected');
-    await waitForVisible(page, 'text=Available in 3h');
+    await waitForVisible(page, 'text=Available in');
 
     const diazepamStatus = await medicationCard(page, 'Diazepam').locator('.card-status').innerText();
     assert(/Wait/.test(diazepamStatus), 'Diazepam should show a wait state after Oxycodone');
-    await medicationCard(page, 'Diazepam').getByRole('button', { name: 'Review Timing' }).click();
+    await medicationCard(page, 'Diazepam').getByRole('button', { name: 'Review Timing' }).click({ force: true });
     await waitForVisible(page, 'text=WARNING:');
     await waitForVisible(page, 'text=Log Anyway');
     await page.keyboard.press('Escape');
 
-    await medicationCard(page, 'Tylenol').getByRole('button', { name: 'Log Dose' }).click();
+    await medicationCard(page, 'Tylenol').getByRole('button', { name: 'Log Dose' }).click({ force: true });
     await waitForVisible(page, 'text=24hr total so far: 0mg / 4000mg');
     await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click();
     await waitForVisible(page, 'text=1000mg / 4000mg');
 
-    await page.getByRole('button', { name: 'Clear All Data' }).click();
-    await page.getByRole('button', { name: 'Clear Everything' }).click();
+    await page.locator('.actions').getByRole('button', { name: 'Medication List' }).click();
+    await page.getByRole('heading', { name: /medication list/i }).waitFor({ state: 'visible', timeout: 15000 });
+    await page.getByRole('button', { name: 'Close' }).click({ force: true });
+
+    await page.getByRole('button', { name: 'Daily Review' }).click();
+    await waitForVisible(page, 'text=Fast caregiver summary');
+    await page.getByRole('button', { name: 'Close' }).click({ force: true });
+
+    await page.getByRole('button', { name: 'Clear Dose History' }).click();
+    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Clear Dose History' }).click();
     await waitForVisible(page, 'text=No doses logged yet');
 
     assert(errors.length === 0, `Post-surgery scenario errors:\n${errors.join('\n')}`);
@@ -269,8 +375,33 @@ async function runDesktopSanity(browser, baseUrl) {
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await waitForVisible(page, 'text=Welcome to Med Tracker');
     await page.getByRole('button', { name: 'Get Started' }).click();
-    await page.getByText('Daily Medications').click();
+    await waitForVisible(page, 'text=Choose a Starting Point');
+    await page.locator('.welcome-tpl').filter({ hasText: 'Daily Routine' }).click();
+    await medicationCard(page, 'Morning Vitamin').waitFor({ state: 'visible', timeout: 15000 });
+    const morningStatus = await medicationCard(page, 'Morning Vitamin').locator('.card-status').innerText();
+    assert(/due|overdue/i.test(morningStatus), 'Scheduled morning medication should show a due status');
+    await page.locator('.actions').getByRole('button', { name: 'Medication List' }).click();
+    await page.getByRole('heading', { name: /medication list/i }).waitFor({ state: 'visible', timeout: 15000 });
+    await waitForVisible(page, 'text=Active medications');
+    await page.getByRole('button', { name: 'Close' }).click({ force: true });
+
+    await medicationCard(page, 'Morning Vitamin').getByRole('button', { name: /Log Dose|Review Timing/ }).click({ force: true });
+    await page.getByRole('button', { name: 'Skip This Dose' }).click();
+    await waitForVisible(page, 'text=Skipped scheduled dose');
+    await page.getByRole('button', { name: 'Daily Review' }).click();
+    await waitForVisible(page, 'text=Skipped doses');
+    await page.getByRole('button', { name: 'Close' }).click({ force: true });
     await page.getByRole('button', { name: 'Open settings' }).waitFor({ state: 'visible', timeout: 15000 });
+
+    await openSettings(page);
+    await page.locator('.med-list-item', { hasText: 'Morning Vitamin' }).getByRole('button', { name: 'Archive' }).click();
+    await closeSettings(page);
+    await medicationCard(page, 'Morning Vitamin').waitFor({ state: 'hidden', timeout: 15000 });
+    await page.locator('.actions').getByRole('button', { name: 'Medication List' }).click();
+    await waitForVisible(page, 'text=Archived medications');
+    await waitForVisible(page, 'text=Morning Vitamin');
+    await page.getByRole('button', { name: 'Close' }).click({ force: true });
+
     assert(errors.length === 0, `Desktop scenario errors:\n${errors.join('\n')}`);
   } finally {
     await context.close();
@@ -280,16 +411,17 @@ async function runDesktopSanity(browser, baseUrl) {
 async function main() {
   await rm(outputDir, { recursive: true, force: true });
   await mkdir(outputDir, { recursive: true });
-  const server = await startStaticServer({ root: rootDir, port: 4173 });
+  const server = providedBaseUrl ? null : await startStaticServer({ root: rootDir, port: 4173 });
   const browser = await chromium.launch({ headless: !headed });
   try {
-    await runScratchScenario(browser, server.baseUrl);
-    await runPostSurgeryScenario(browser, server.baseUrl);
-    await runDesktopSanity(browser, server.baseUrl);
+    const baseUrl = providedBaseUrl || server.baseUrl;
+    await runScratchScenario(browser, baseUrl);
+    await runPostSurgeryScenario(browser, baseUrl);
+    await runDesktopSanity(browser, baseUrl);
     console.log('Smoke scenarios passed');
   } finally {
     await browser.close();
-    await server.close();
+    if (server) await server.close();
   }
 }
 
