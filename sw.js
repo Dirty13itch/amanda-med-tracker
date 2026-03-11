@@ -1,4 +1,4 @@
-const CACHE_NAME = 'medtracker-v16';
+const CACHE_NAME = 'medtracker-v17';
 const ASSETS = [
   '/',
   '/index.html',
@@ -6,22 +6,28 @@ const ASSETS = [
   '/icon.svg'
 ];
 
-// Install: cache all app assets, take over immediately
+// Install: pre-cache the app shell for offline use.
 self.addEventListener('install', event => {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then(cache => cache.addAll(ASSETS))
-      .then(() => self.skipWaiting())
   );
 });
 
-// Activate: clean up ALL old caches, claim clients immediately
+// Activate: clean up ALL old caches, claim clients immediately.
 self.addEventListener('activate', event => {
   event.waitUntil(
     caches.keys().then(keys =>
       Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
+});
+
+// Updates become active only after the page explicitly asks for it.
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 // Fetch strategy:

@@ -1,2 +1,6 @@
 .netlify/
 .claude/
+node_modules/
+output/playwright/
+server1.err
+server1.out

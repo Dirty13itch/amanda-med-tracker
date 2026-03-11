@@ -212,9 +212,8 @@ body.bedside .config-share .btn-import{background:#1a1a1a;border:1px solid #2a2a
 .bedside-toggle:hover{color:#fff}
 .bedside-toggle.active{color:#ffeaa7}
 /* Alert Banner */
-.alert-banner{position:fixed;top:0;left:0;right:0;padding:14px 20px;z-index:250;display:flex;align-items:center;gap:12px;transform:translateY(-100%);transition:transform .35s cubic-bezier(.4,0,.2,1);box-shadow:0 4px 20px rgba(0,0,0,.3)}
-@supports(padding-top:env(safe-area-inset-top)){.alert-banner{padding-top:calc(14px + env(safe-area-inset-top))}}
-.alert-banner.ab-visible{transform:translateY(0)}
+.alert-banner{position:fixed;top:var(--alert-banner-top,96px);left:50%;width:min(560px,calc(100vw - 32px));padding:14px 20px;border-radius:14px;z-index:250;display:flex;align-items:center;gap:12px;transform:translate(-50%,-140%);transition:transform .35s cubic-bezier(.4,0,.2,1),opacity .2s ease;box-shadow:0 4px 20px rgba(0,0,0,.3);opacity:0;pointer-events:none}
+.alert-banner.ab-visible{transform:translate(-50%,0);opacity:1;pointer-events:auto}
 .alert-banner.ab-ready{background:linear-gradient(135deg,#00b894,#00cec9)}
 .alert-banner.ab-overdue{background:linear-gradient(135deg,#e74c3c,#c0392b)}
 .ab-text{flex:1;color:#fff;font-size:16px;font-weight:600;line-height:1.3}
@@ -404,27 +403,61 @@ body.bedside *:focus-visible{outline-color:#ffeaa7}
 </div>
 <div class="welcome-overlay" id="welcome-overlay" style="display:none"></div>
 <script>
-// Register service worker for offline + PWA install
-// Auto-update: checks for new version every 5 min + on tab focus, auto-reloads
+// Register service worker for offline + PWA install.
+// Show an update banner only for real updates, not for first install.
 if ('serviceWorker' in navigator) {
+  let refreshing = false;
+  let updateBanner = null;
+
+  function hideUpdateBanner() {
+    if (!updateBanner) return;
+    updateBanner.classList.remove('ub-visible');
+    setTimeout(() => {
+      if (updateBanner && updateBanner.parentNode) updateBanner.parentNode.removeChild(updateBanner);
+      updateBanner = null;
+    }, 300);
+  }
+
+  function showUpdateBanner(reg) {
+    if (updateBanner || !reg.waiting || !navigator.serviceWorker.controller) return;
+    const banner = document.createElement('div');
+    banner.className = 'update-banner';
+    banner.innerHTML = '<span>Update available</span><button type="button">Refresh</button>';
+    banner.querySelector('button').onclick = () => {
+      if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+    };
+    document.body.appendChild(banner);
+    requestAnimationFrame(() => banner.classList.add('ub-visible'));
+    updateBanner = banner;
+  }
+
   navigator.serviceWorker.register('/sw.js').then(reg => {
-    // Check for updates every 5 minutes
+    const watchForUpdate = worker => {
+      if (!worker) return;
+      worker.addEventListener('statechange', () => {
+        if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+          showUpdateBanner(reg);
+        }
+      });
+    };
+
+    if (reg.waiting && navigator.serviceWorker.controller) showUpdateBanner(reg);
+    if (reg.installing) watchForUpdate(reg.installing);
+    reg.addEventListener('updatefound', () => watchForUpdate(reg.installing));
+
+    // Check for updates every 5 minutes.
     setInterval(() => reg.update().catch(() => {}), 5 * 60 * 1000);
-    // Check on tab visibility change (e.g. switching back to app)
+    // Check on tab visibility change (e.g. switching back to app).
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') reg.update().catch(() => {});
     });
   }).catch(() => {});
-  // When a new SW takes control, show non-intrusive update toast (don't force-reload mid-action)
-  let refreshing = false;
+
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (refreshing) return;
     refreshing = true;
-    const banner = document.createElement('div');
-    banner.className = 'update-banner';
-    banner.innerHTML = '<span>Update available</span><button onclick="window.location.reload()">Refresh</button>';
-    document.body.appendChild(banner);
-    setTimeout(() => banner.classList.add('ub-visible'), 100);
+    hideUpdateBanner();
+    window.location.reload();
   });
 }
 
@@ -585,6 +618,107 @@ function rolling24hTotal(medId) {
   return state.doses.filter(d=>d.medId===medId&&new Date(d.time)>=cutoff).reduce((s,d)=>s+d.mg,0);
 }
 function findPairedMeds(medId) { return MEDS.filter(m=>m.pairedWith===medId); }
+const OVERDUE_GRACE_MIN = 30;
+
+function getDoseAgeMinutes(dose, referenceDate) {
+  return dose ? (referenceDate - new Date(dose.time)) / 60000 : null;
+}
+
+function getMedReadiness(med, atDate) {
+  const referenceDate = atDate ? new Date(atDate) : now();
+  const todayCount = todayDoses(med.id);
+  const todayTabs = todayCount.reduce((s,d)=>s+d.tabs,0);
+  const todayMg = todayCount.reduce((s,d)=>s+d.mg,0);
+  const rollingTotal = med.trackTotal ? rolling24hTotal(med.id) : 0;
+  const last = lastDose(med.id);
+  const ago = getDoseAgeMinutes(last, referenceDate);
+  const intervalRemaining = ago!==null&&ago<med.intervalMin ? med.intervalMin-ago : 0;
+  const conflictMed = med.conflictsWith ? getMed(med.conflictsWith) : null;
+  const lastConflict = med.conflictsWith ? lastDose(med.conflictsWith) : null;
+  const conflictAgo = getDoseAgeMinutes(lastConflict, referenceDate);
+  const conflictRemaining = conflictAgo!==null&&med.conflictMin&&conflictAgo<med.conflictMin ? med.conflictMin-conflictAgo : 0;
+  const maxDoseBlocked = !!(med.maxDoses&&todayCount.length>=med.maxDoses);
+  const dailyLimitReached = !!(med.trackTotal&&rollingTotal>=med.maxDaily);
+  const minimumDoseExceedsLimit = !!(med.trackTotal&&rollingTotal + med.perTab > med.maxDaily);
+  const dailyLimitBlocked = dailyLimitReached || minimumDoseExceedsLimit;
+  const hardBlocked = maxDoseBlocked||dailyLimitBlocked;
+  const intervalBlocked = intervalRemaining > 0;
+  const conflictBlocked = conflictRemaining > 0;
+  const minutesUntilEligible = hardBlocked ? Infinity : Math.max(intervalRemaining, conflictRemaining, 0);
+  const primaryBlock = dailyLimitBlocked ? 'dailyLimit'
+    : maxDoseBlocked ? 'maxDose'
+    : conflictBlocked && conflictRemaining >= intervalRemaining ? 'conflict'
+    : intervalBlocked ? 'interval'
+    : null;
+  const progressWindow = primaryBlock === 'conflict'
+    ? Math.max(med.conflictMin||1, 1)
+    : Math.max(med.intervalMin||1, 1);
+  const progressPct = hardBlocked ? 100 : minutesUntilEligible > 0
+    ? Math.max(0, Math.min(100, (1 - (minutesUntilEligible / progressWindow)) * 100))
+    : 100;
+  const isReadyRecommended = !hardBlocked && minutesUntilEligible <= 0;
+  const isOverdue = !hardBlocked && !intervalBlocked && !conflictBlocked && ago!==null && (ago-med.intervalMin) > OVERDUE_GRACE_MIN;
+  return {
+    med,
+    last,
+    ago,
+    todayCount,
+    todayTabs,
+    todayMg,
+    rollingTotal,
+    lastConflict,
+    conflictMed,
+    conflictAgo,
+    intervalRemaining,
+    conflictRemaining,
+    intervalBlocked,
+    conflictBlocked,
+    dailyLimitReached,
+    minimumDoseExceedsLimit,
+    dailyLimitBlocked,
+    maxDoseBlocked,
+    hardBlocked,
+    minutesUntilEligible,
+    nextEligibleAt: hardBlocked ? null : new Date(referenceDate.getTime()+minutesUntilEligible*60000).toISOString(),
+    isReadyRecommended,
+    isOverdue,
+    canOverride: !hardBlocked && (intervalBlocked || conflictBlocked),
+    shouldAlert: !hardBlocked && minutesUntilEligible <= 0,
+    shouldOfferReminder: !hardBlocked && minutesUntilEligible > 0,
+    primaryBlock,
+    progressPct
+  };
+}
+
+function getReadinessStatus(info) {
+  if (info.maxDoseBlocked) {
+    return { dot:'red', text:`${info.todayCount.length}/${info.med.maxDoses} doses today (complete)`, actionLabel:'Limit Reached', canOpenModal:false, canLogRecommended:false };
+  }
+  if (info.dailyLimitBlocked) {
+    const text = info.dailyLimitReached
+      ? `24hr limit reached (${info.med.maxDaily}mg)`
+      : `Next dose exceeds 24hr max (${info.rollingTotal}mg of ${info.med.maxDaily}mg)`;
+    return { dot:'red', text, actionLabel:'Limit Reached', canOpenModal:false, canLogRecommended:false };
+  }
+  if (info.isOverdue) {
+    return { dot:'red', text:`Overdue by ${minsToHM(Math.round((info.ago||0)-info.med.intervalMin))}`, actionLabel:'Log Dose', canOpenModal:true, canLogRecommended:true };
+  }
+  if (info.isReadyRecommended) {
+    return { dot:'green', text:'Ready now', actionLabel:'Log Dose', canOpenModal:true, canLogRecommended:true };
+  }
+  if (info.conflictBlocked) {
+    const conflictName = info.conflictMed ? info.conflictMed.name : info.med.conflictsWith;
+    return { dot:'gray', text:`Wait ${minsToHM(info.conflictRemaining)} after ${conflictName}`, actionLabel:'Review Timing', canOpenModal:true, canLogRecommended:false };
+  }
+  return { dot:'gray', text:`Available in ${minsToHM(info.intervalRemaining)}`, actionLabel:'Review Timing', canOpenModal:true, canLogRecommended:false };
+}
+
+function getQueueTimeLabel(info) {
+  if (info.isOverdue) return 'Overdue';
+  if (info.isReadyRecommended) return 'Ready';
+  if (info.conflictBlocked) return `Wait ${minsToHM(info.minutesUntilEligible)}`;
+  return minsToHM(info.minutesUntilEligible);
+}
 
 // Retroactive time selector
 window._doseTimeOffset = 0; // 0=just now, >0=minutes ago, -1=custom time input
@@ -973,10 +1107,17 @@ function playChime() {
   } catch(e) {}
 }
 
+function positionAlertBanner() {
+  const header = document.querySelector('header');
+  const top = header ? Math.ceil(header.getBoundingClientRect().bottom + 12) : 96;
+  document.documentElement.style.setProperty('--alert-banner-top', top + 'px');
+}
+
 function showAlertBanner(text, isOverdue, medId) {
   const banner = document.getElementById('alert-banner');
   const textEl = document.getElementById('ab-text');
   const logBtn = document.getElementById('ab-log-btn');
+  positionAlertBanner();
   textEl.textContent = text;
   banner.className = 'alert-banner ab-visible ' + (isOverdue ? 'ab-overdue' : 'ab-ready');
   logBtn.onclick = () => { dismissAlertBanner(); handleLog(medId); };
@@ -1177,7 +1318,7 @@ function showMultiTabModal(med) {
   const paired=findPairedMeds(med.id);
   let pairedHtml='';
   paired.forEach(pm=>{
-    pairedHtml+=`<label class="modal-check"><input type="checkbox" data-paired-med="${pm.id}" checked> Also give ${esc(pm.name)}${pm.brand?' ('+esc(pm.brand)+')':''} ${esc(pm.dose)} for ${esc(pm.purpose.toLowerCase())}</label>`;
+    pairedHtml+=`<label class="modal-check"><input type="checkbox" data-paired-med="${pm.id}"> Also log ${esc(pm.name)}${pm.brand?' ('+esc(pm.brand)+')':''} ${esc(pm.dose)} if it was taken now for ${esc(pm.purpose.toLowerCase())}</label>`;
   });
   window._modalMedId=med.id;
   window._modalTabVal=1;
@@ -1313,6 +1454,360 @@ function handleClear() {
       <button class="btn-confirm" onclick="handleExport();closeModal()">Export Log First</button>
       <button class="btn-danger" onclick="localStorage.removeItem(DOSES_KEY);state=seedState();save();render();closeModal()">Clear Everything</button>
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+    </div>`);
+}
+
+function formatIntervalLabel(minutes) {
+  return minutes >= 60 ? Math.round(minutes / 60) + ' hour' + (minutes >= 120 ? 's' : '') : minutes + ' minutes';
+}
+
+function buildIntervalWarning(info) {
+  if (!info.intervalBlocked) return '';
+  return `<div class="warn-box">Last ${esc(info.med.name)} was ${minsToHM(info.ago)} ago. Recommended interval: ${formatIntervalLabel(info.med.intervalMin)}. Available in ${minsToHM(info.intervalRemaining)}.</div>`;
+}
+
+function buildConflictWarning(info) {
+  if (!info.conflictBlocked) return '';
+  const conflictName = info.conflictMed ? info.conflictMed.name : info.med.conflictsWith;
+  return `<div class="warn-box"><strong>WARNING:</strong> ${esc(conflictName)} was taken ${minsToHM(info.conflictAgo)} ago. You should wait at least ${formatIntervalLabel(info.med.conflictMin)} between ${esc(conflictName)} and ${esc(info.med.name)}. Recommend waiting ${Math.ceil(info.conflictRemaining)} more minutes.</div>`;
+}
+
+function getNextUpQueue() {
+  const queue = [];
+  MEDS.forEach(med => {
+    const info = getMedReadiness(med);
+    if (info.hardBlocked) return;
+    queue.push(info);
+  });
+  queue.sort((a, b) => {
+    if (a.isOverdue !== b.isOverdue) return a.isOverdue ? -1 : 1;
+    if (a.shouldAlert !== b.shouldAlert) return a.shouldAlert ? -1 : 1;
+    const timeDiff = a.minutesUntilEligible - b.minutesUntilEligible;
+    if (Math.abs(timeDiff) > 0.5) return timeDiff;
+    if (a.med.scheduled !== b.med.scheduled) return a.med.scheduled ? -1 : 1;
+    return MEDS.indexOf(a.med) - MEDS.indexOf(b.med);
+  });
+  return queue;
+}
+
+function renderNextUp() {
+  const container = document.getElementById('next-up');
+  const queue = getNextUpQueue();
+  if (queue.length === 0) {
+    container.innerHTML = '<div class="next-up-clear"><div class="nuc-calm">All caught up!</div><div class="nuc-detail">Every scheduled medication is on track. Great job.</div></div>';
+    return;
+  }
+  const primary = queue[0];
+  const primaryStatus = getReadinessStatus(primary);
+  const rest = queue.slice(1, 4);
+  if (!primary.isReadyRecommended && !primary.isOverdue && primary.minutesUntilEligible > 120) {
+    container.innerHTML = `<div class="next-up-clear"><div class="nuc-calm">All clear - you're on track</div><div class="nuc-detail">Next up: ${esc(primary.med.name)} in ${minsToHM(primary.minutesUntilEligible)}. Relax until then.</div></div>`;
+    return;
+  }
+  const cardClass = primary.isOverdue ? 'nuc-overdue' : primary.isReadyRecommended ? 'nuc-available' : '';
+  const fillColor = primary.isReadyRecommended ? 'var(--success)' : primary.med.color;
+  const btnLabel = primaryStatus.canLogRecommended ? 'Log Dose Now' : primaryStatus.actionLabel;
+  let html = `<div class="next-up-label">Next Up</div>
+    <div class="next-up-card ${cardClass}">
+      <div class="nuc-header">
+        <div>
+          <div class="nuc-name" style="color:${primary.med.color}">${esc(primary.med.name)}</div>
+          ${primary.med.brand ? `<div class="nuc-brand">${esc(primary.med.brand)}</div>` : ''}
+        </div>
+        <div class="card-badge" style="background:${primary.med.bgBadge};color:${primary.med.color}">${esc(primary.med.purpose)}</div>
+      </div>
+      <div class="nuc-dose">${esc(primary.med.dose)} &mdash; ${esc(primary.med.freq)}</div>
+      <div class="nuc-status"><span class="dot ${primaryStatus.dot}"></span>${primaryStatus.text}</div>
+      <div class="nuc-timer-bar"><div class="nuc-timer-fill" style="width:${primary.progressPct}%;background:${fillColor}"></div></div>
+      ${primary.shouldOfferReminder ? `<button class="btn-reminder" onclick="event.stopPropagation();downloadReminder('${primary.med.id}')" style="margin-bottom:12px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="7"/><path d="M12 9v4l2.5 1.5"/><path d="M5 3L2 6M22 6l-3-3"/></svg>Set phone alarm for when it's due</button>` : ''}
+      <button class="btn-log-next" style="background:${primary.med.color}" onclick="handleLog('${primary.med.id}')">${btnLabel}</button>
+    </div>`;
+  if (nqiExpandedMedId && !rest.find(i => i.med.id === nqiExpandedMedId)) nqiExpandedMedId = null;
+  if (rest.length > 0) {
+    const secOpen = !nqiSectionCollapsed;
+    html += `<button class="nqi-section-toggle" onclick="toggleNqiSection()" aria-expanded="${secOpen}" aria-controls="nqi-queue-wrap">
+      <span>Then (${rest.length} more)</span>
+      <span class="chevron ${secOpen ? 'open' : ''}">&#9660;</span>
+    </button>`;
+    html += `<div id="nqi-queue-wrap" class="nqi-queue-wrap ${nqiSectionCollapsed ? 'collapsed' : ''}"><div class="next-up-queue">`;
+    rest.forEach(item => {
+      const itemStatus = getReadinessStatus(item);
+      const isExp = nqiExpandedMedId === item.med.id;
+      html += `<div class="nqi" onclick="toggleNqiItem('${item.med.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleNqiItem('${item.med.id}')}" role="button" tabindex="0" aria-expanded="${isExp}">
+        <div class="nqi-dot" style="background:${item.med.color}"></div>
+        <div class="nqi-name">${esc(item.med.name)}</div>
+        <div class="nqi-time">${getQueueTimeLabel(item)}</div>
+        <span class="nqi-chevron ${isExp ? 'open' : ''}">&#9660;</span>
+      </div>`;
+      html += `<div class="nqi-detail ${isExp ? 'open' : ''}">
+        <div class="nqi-detail-dose">${esc(item.med.dose)} &mdash; ${esc(item.med.freq)}</div>
+        <div class="nqi-detail-status"><span class="dot ${itemStatus.dot}"></span>${itemStatus.text}</div>
+        <button class="nqi-btn-log" style="background:${item.med.color}" onclick="event.stopPropagation();handleLog('${item.med.id}')">${itemStatus.canLogRecommended ? 'Log Dose' : itemStatus.actionLabel}</button>
+        ${item.shouldOfferReminder ? `<button class="nqi-btn-reminder" onclick="event.stopPropagation();downloadReminder('${item.med.id}')">&#9200; Set alarm</button>` : ''}
+      </div>`;
+    });
+    html += '</div></div>';
+  }
+  container.innerHTML = html;
+}
+
+function renderCards() {
+  const container=document.getElementById('med-cards');
+  if(MEDS.length===0){
+    container.innerHTML='<div class="empty-state"><p>No medications added yet.<br>Tap the gear icon to add your first one.</p><button onclick="openSettings();startAddMed()">+ Add Medication</button></div>';
+    return;
+  }
+  container.innerHTML=MEDS.map(med=>{
+    const info=getMedReadiness(med);
+    const status=getReadinessStatus(info);
+    const warnsHtml=(med.warns||[]).map(w=>`<div class="card-warn">${esc(w)}</div>`).join('');
+    return `<div class="card" role="listitem" aria-label="${esc(med.name)} medication card">
+      <div class="card-accent" style="background:${med.color}"></div>
+      <div class="card-body">
+        <div class="card-top">
+          <div>
+            <div class="card-name" style="color:${med.color}">${esc(med.name)}</div>
+            ${med.brand?`<div class="card-brand">${esc(med.brand)}</div>`:''}
+          </div>
+          <div class="card-badge" style="background:${med.bgBadge};color:${med.color}">${esc(med.purpose)}</div>
+        </div>
+        <div class="card-dose">${esc(med.dose)} &mdash; ${esc(med.freq)}</div>
+        <div class="card-status"><span class="dot ${status.dot}"></span>${status.text}</div>
+        <div class="card-timer">${info.last?`Last: ${fmt(info.last.time,'time')} (${minsToHM(info.ago)} ago)`:'No doses logged yet'}</div>
+        <div class="timer-bar"><div class="timer-fill" style="width:${info.progressPct}%;background:${info.isReadyRecommended?'var(--success)':med.color}"></div></div>
+        ${med.maxDoses ? `<div class="completion-dots">${Array.from({length:med.maxDoses},(_,i)=>`<span class="cd-dot" style="border-color:${med.color};${i<info.todayCount.length?'background:'+med.color:''}"></span>`).join('')}<span class="cd-label">${info.todayCount.length >= med.maxDoses ? 'All done!' : info.todayCount.length === 0 ? '0 of '+med.maxDoses+' today' : info.todayCount.length+' of '+med.maxDoses+' - '+(med.maxDoses-info.todayCount.length)+' to go'}</span></div>` : `<div class="card-today">Today: ${info.todayTabs} tab${info.todayTabs!==1?'s':''}${info.todayMg?' ('+info.todayMg+'mg)':''}</div>`}
+        ${warnsHtml}
+        ${info.hardBlocked ? '' : `<button class="btn-reminder" onclick="event.stopPropagation();downloadReminder('${med.id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="7"/><path d="M12 9v4l2.5 1.5"/><path d="M5 3L2 6M22 6l-3-3"/></svg>Set Reminder</button>`}
+        <button class="btn-log" style="background:${med.color}" onclick="handleLog('${med.id}')" ${status.canOpenModal ? '' : 'disabled'}>${status.actionLabel}</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function checkAlerts(forceOverdueCheck) {
+  const queue = getNextUpQueue();
+  if (!alertsInitialized) {
+    queue.forEach(item => { prevAvailability[item.med.id] = item.shouldAlert; });
+    alertsInitialized = true;
+    if (forceOverdueCheck) {
+      const overdue = queue.filter(q => q.isOverdue);
+      if (overdue.length > 0) showAlertBanner(overdue[0].med.name + ' is overdue - tap to log', true, overdue[0].med.id);
+    }
+    return;
+  }
+  const newlyAvailable = [];
+  queue.forEach(item => {
+    const wasAvailable = prevAvailability[item.med.id] || false;
+    prevAvailability[item.med.id] = item.shouldAlert;
+    if (item.shouldAlert && !wasAvailable) newlyAvailable.push(item);
+  });
+  if (newlyAvailable.length > 0) {
+    const primary = newlyAvailable[0];
+    showAlertBanner('Time for ' + primary.med.name, false, primary.med.id);
+    playChime();
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+    fireNotification(primary.med.name, false);
+  }
+  if (forceOverdueCheck) {
+    const overdue = queue.filter(q => q.isOverdue);
+    if (overdue.length > 0 && newlyAvailable.length === 0) {
+      showAlertBanner(overdue[0].med.name + ' is overdue - tap to log', true, overdue[0].med.id);
+      playChime();
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
+      fireNotification(overdue[0].med.name, true);
+    }
+  }
+}
+
+function downloadReminder(medId) {
+  const med = getMed(medId);
+  if (!med) return;
+  const info = getMedReadiness(med);
+  if (info.hardBlocked) {
+    const blockText = info.dailyLimitBlocked
+      ? `No reminder set for ${esc(med.name)} because another dose would exceed the 24-hour maximum.`
+      : `No reminder set for ${esc(med.name)} because all doses for today are already logged.`;
+    showModal(`<h3>Reminder unavailable</h3>
+      <p>${blockText}</p>
+      <div class="modal-actions">
+        <button class="btn-confirm" onclick="closeModal()">OK</button>
+      </div>`);
+    return;
+  }
+  let nextTime;
+  if (info.shouldOfferReminder && info.nextEligibleAt) {
+    nextTime = new Date(info.nextEligibleAt);
+  } else if (info.last) {
+    nextTime = new Date(new Date(info.last.time).getTime() + med.intervalMin * 60000);
+    if (nextTime < now()) nextTime = new Date(now().getTime() + 5 * 60000);
+  } else {
+    nextTime = new Date(now().getTime() + 30 * 60000);
+  }
+  const end = new Date(nextTime.getTime() + 5 * 60000);
+  const pad = n => String(n).padStart(2, '0');
+  const icsDate = d => d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + 'T' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+  const ics = [
+    'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//MedTracker//EN',
+    'BEGIN:VEVENT',
+    'UID:' + Date.now() + '-' + medId + '@medtracker',
+    'DTSTART:' + icsDate(nextTime),
+    'DTEND:' + icsDate(end),
+    'SUMMARY:Take ' + med.name + (med.brand ? ' (' + med.brand + ')' : ''),
+    'DESCRIPTION:' + med.dose + ' - ' + med.freq,
+    'BEGIN:VALARM','TRIGGER:-PT0M','ACTION:DISPLAY',
+    'DESCRIPTION:Time for ' + med.name,
+    'END:VALARM',
+    'BEGIN:VALARM','TRIGGER:-PT5M','ACTION:DISPLAY',
+    'DESCRIPTION:' + med.name + ' in 5 minutes',
+    'END:VALARM',
+    'END:VEVENT','END:VCALENDAR'
+  ].join('\r\n');
+  const blob = new Blob([ics], { type: 'text/calendar' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'reminder-' + med.name.toLowerCase().replace(/\s+/g, '-') + '.ics';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function handleLog(medId) {
+  try {
+    const med=getMed(medId);
+    if(!med){console.error('handleLog: unknown med',medId);return;}
+    const info = getMedReadiness(med);
+    if (info.hardBlocked) {
+      const blockText = info.dailyLimitBlocked
+        ? `Another dose would exceed the ${med.maxDaily}mg 24-hour maximum for ${esc(med.name)}.`
+        : `${esc(med.name)} already has all ${med.maxDoses} doses logged for today.`;
+      showModal(`<h3>${esc(med.name)} unavailable</h3>
+        <p>${blockText}</p>
+        <div class="modal-actions">
+          <button class="btn-confirm" onclick="closeModal()">OK</button>
+        </div>`);
+      return;
+    }
+    if(med.conflictsWith) return showConflictModal(med);
+    if(med.trackTotal) return showTrackedModal(med);
+    if(med.maxTabs>1||findPairedMeds(medId).length>0) return showMultiTabModal(med);
+    showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''}</h3>
+      <p>${esc(med.dose)}</p>${buildIntervalWarning(info)}
+      ${renderTimeSelector()}
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+        <button class="btn-confirm" onclick="confirmSingleDose('${medId}',1)">Confirm</button>
+      </div>`);
+  } catch(e) { console.error('handleLog error:',e); }
+}
+
+function showMultiTabModal(med) {
+  const info = getMedReadiness(med);
+  let tabsHtml='';
+  if(med.maxTabs>1){
+    tabsHtml=`<p style="font-weight:600;margin-bottom:6px">How many tablets?</p><div class="modal-tabs" id="modal-tab-group">`;
+    for(let i=1;i<=med.maxTabs;i++){
+      const active=i===1?'active':'';
+      const mg=i*med.perTab;
+      tabsHtml+=`<button type="button" class="modal-tab ${active}" onclick="selectTab(this,'modal-tab-group',${i})">${i} tab${i>1?'s':''}<span class="sub">${mg}mg</span></button>`;
+    }
+    tabsHtml+='</div>';
+  }
+  const paired=findPairedMeds(med.id);
+  let pairedHtml='';
+  paired.forEach(pm=>{
+    pairedHtml+=`<label class="modal-check"><input type="checkbox" data-paired-med="${pm.id}"> Also log ${esc(pm.name)}${pm.brand?' ('+esc(pm.brand)+')':''} ${esc(pm.dose)} if it was taken now for ${esc(pm.purpose.toLowerCase())}</label>`;
+  });
+  window._modalMedId=med.id;
+  window._modalTabVal=1;
+  showModal(`<h3>Log ${esc(med.name)}</h3>${buildIntervalWarning(info)}
+    ${tabsHtml}${pairedHtml}
+    ${renderTimeSelector()}
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-confirm" onclick="confirmMultiTab()">Log Dose</button>
+    </div>`);
+}
+
+function confirmMultiTab() {
+  try {
+    const doseTime = getDoseTime();
+    addDose(window._modalMedId, window._modalTabVal||1, doseTime);
+    document.querySelectorAll('[data-paired-med]').forEach(cb=>{
+      if(cb.checked) addDose(cb.dataset.pairedMed,1,doseTime);
+    });
+    closeModal();
+  } catch(e) { console.error('confirmMultiTab error:',e); closeModal(); }
+}
+
+function showTrackedModal(med) {
+  const info = getMedReadiness(med);
+  const cautionThreshold=med.maxDaily*0.75;
+  const allowedTabs = [];
+  for (let i = 1; i <= med.maxTabs; i++) {
+    if (info.rollingTotal + (i * med.perTab) <= med.maxDaily) allowedTabs.push(i);
+  }
+  const defaultTabs = allowedTabs.includes(2) ? 2 : (allowedTabs[allowedTabs.length - 1] || 1);
+  let tabsHtml='<p style="font-weight:600;margin-bottom:6px">How many tablets?</p><div class="modal-tabs" id="modal-tab-group">';
+  for(let i=1;i<=med.maxTabs;i++){
+    const mg=i*med.perTab;
+    const projected=info.rollingTotal+mg;
+    let warnSpan='';
+    if(projected>med.maxDaily) warnSpan='<span style="color:var(--danger-border)"> (exceeds limit!)</span>';
+    else if(projected>cautionThreshold) warnSpan='<span style="color:var(--warn-border)"> (caution)</span>';
+    const disabled = projected > med.maxDaily;
+    const active=i===defaultTabs&&!disabled?'active':'';
+    tabsHtml+=`<button type="button" class="modal-tab ${active}" onclick="${disabled ? '' : `selectTab(this,'modal-tab-group',${i})`}" ${disabled ? 'disabled' : ''}>${i} tab${i>1?'s':''}<span class="sub">${mg}mg &rarr; ${projected}mg total${warnSpan}</span></button>`;
+  }
+  tabsHtml+='</div>';
+  const maxTabMg=info.rollingTotal+med.maxTabs*med.perTab;
+  const exceedWarn=maxTabMg>med.maxDaily?`<div class="warn-box">Taking ${med.maxTabs} tablets would exceed the ${med.maxDaily}mg daily maximum!</div>`:'';
+  window._modalMedId=med.id;
+  window._modalTabVal=defaultTabs;
+  showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''}</h3>${buildIntervalWarning(info)}
+    ${tabsHtml}
+    ${exceedWarn}
+    <p style="font-size:13px;color:var(--muted)">24hr total so far: ${info.rollingTotal}mg / ${med.maxDaily}mg</p>
+    ${renderTimeSelector()}
+    <div class="modal-actions" style="margin-top:12px">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-confirm" onclick="confirmTracked()" ${allowedTabs.length ? '' : 'disabled'}>Log Dose</button>
+    </div>`);
+}
+
+function confirmSingleDose(medId, tabs) {
+  try { addDose(medId, tabs||1, getDoseTime()); closeModal(); }
+  catch(e) { console.error('confirmSingleDose error:',e); closeModal(); }
+}
+
+function confirmTracked() {
+  try {
+    const med = getMed(window._modalMedId);
+    const tabs = window._modalTabVal||1;
+    if (!med) return closeModal();
+    const projected = rolling24hTotal(med.id) + (tabs * med.perTab);
+    if (projected > med.maxDaily) {
+      showModal(`<h3>${esc(med.name)} limit reached</h3>
+        <p>That dose would bring the 24-hour total to ${projected}mg, above the ${med.maxDaily}mg maximum.</p>
+        <div class="modal-actions">
+          <button class="btn-confirm" onclick="closeModal()">OK</button>
+        </div>`);
+      return;
+    }
+    addDose(window._modalMedId, tabs, getDoseTime());
+    closeModal();
+  }
+  catch(e) { console.error('confirmTracked error:',e); closeModal(); }
+}
+
+function showConflictModal(med) {
+  const info = getMedReadiness(med);
+  const confirmLabel = info.canOverride ? 'Log Anyway' : 'Log Dose';
+  const confirmClass = info.canOverride ? 'btn-danger' : 'btn-confirm';
+  showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''} ${esc(med.dose)}</h3>${buildConflictWarning(info)}${buildIntervalWarning(info)}
+    <p>${esc(med.purpose)} &mdash; 1 tablet</p>
+    ${renderTimeSelector()}
+    <div class="modal-actions" style="margin-top:14px">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="${confirmClass}" onclick="confirmSingleDose('${med.id}',1)">${confirmLabel}</button>
     </div>`);
 }
 
@@ -1863,6 +2358,8 @@ function initAppHeader() {
 initAppHeader();
 initBedside();
 initWarningsState();
+positionAlertBanner();
+window.addEventListener('resize', positionAlertBanner);
 
 // First-run welcome flow
 if (_isFirstRun) { showWelcome(); }
@@ -1889,22 +2386,21 @@ setInterval(()=>{
   try{
     document.querySelectorAll('.card').forEach((card,i)=>{
       const med=MEDS[i]; if(!med) return;
-      const last=lastDose(med.id);
-      if(!last) return;
-      const ago=minAgo(last.time);
-      const remaining=med.intervalMin-ago;
-      const available=ago>=med.intervalMin;
-      const pct=Math.min(100,ago/med.intervalMin*100);
+      const info=getMedReadiness(med);
+      const status=getReadinessStatus(info);
       const statusEl=card.querySelector('.card-status');
       const timerEl=card.querySelector('.card-timer');
       const fillEl=card.querySelector('.timer-fill');
+      const logBtn=card.querySelector('.btn-log');
       if(statusEl){
-        const dot=available?'green':'gray';
-        const txt=available?'Available now':`Available in ${minsToHM(remaining)}`;
-        statusEl.innerHTML=`<span class="dot ${dot}"></span>${txt}`;
+        statusEl.innerHTML=`<span class="dot ${status.dot}"></span>${status.text}`;
       }
-      if(timerEl) timerEl.textContent=`Last: ${fmt(last.time,'time')} (${minsToHM(ago)} ago)`;
-      if(fillEl){fillEl.style.width=pct+'%';fillEl.style.background=available?_cssSuccess:med.color;}
+      if(timerEl) timerEl.textContent=info.last?`Last: ${fmt(info.last.time,'time')} (${minsToHM(info.ago)} ago)`:'No doses logged yet';
+      if(fillEl){fillEl.style.width=info.progressPct+'%';fillEl.style.background=info.isReadyRecommended?_cssSuccess:med.color;}
+      if(logBtn){
+        logBtn.textContent=status.actionLabel;
+        logBtn.disabled=!status.canOpenModal;
+      }
     });
   }catch(e){}
 },1000);
