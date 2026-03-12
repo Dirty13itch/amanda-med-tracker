@@ -23,6 +23,7 @@ export const COLOR_PALETTE = [
 ];
 export const OVERDUE_GRACE_MIN = 30;
 export const DUPLICATE_WINDOW_MIN = 5;
+export const INCORRECT_OXY_WARNING = 'Stop day after surgery unless itching or nausea';
 
 const DEFAULT_PROFILE = {
   allergies: [],
@@ -64,7 +65,7 @@ const AMANDA_MEDS = [
     scheduledTimes: [],
     isPrn: true,
     instructions: 'Use only when pain is not manageable with other options.',
-    warns: ['Stop day after surgery unless itching or nausea'],
+    warns: [],
     category: 'opioid'
   },
   {
@@ -354,6 +355,7 @@ export function normalizeMed(med = {}) {
   const scheduledTimes = cleanArray(med.scheduledTimes).map(normalizeTimeString).filter(Boolean);
   const scheduleType = med.scheduleType || (med.scheduled ? 'scheduled' : 'prn');
   const archived = Boolean(med.archived);
+  const warns = cleanArray(med.warns).filter(warning => !(String(med.id || '').trim() === 'oxycodone' && warning === INCORRECT_OXY_WARNING));
   return {
     id: String(med.id || `med-${Date.now()}`),
     name: String(med.name || '').trim(),
@@ -373,7 +375,7 @@ export function normalizeMed(med = {}) {
     scheduledTimes,
     isPrn: scheduleType !== 'scheduled',
     instructions: String(med.instructions || '').trim(),
-    warns: cleanArray(med.warns),
+    warns,
     category: String(med.category || '').trim(),
     pairedWith: med.pairedWith ? String(med.pairedWith) : '',
     conflictsWith: med.conflictsWith ? String(med.conflictsWith) : '',

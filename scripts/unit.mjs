@@ -109,3 +109,21 @@ run('round-trips setup payloads with unicode and profile data', () => {
   assert.equal(decoded.profile.careLabel, 'Post-op recovery');
   assert.equal(decoded.meds[0].color, 'var(--oxy)');
 });
+
+run('removes the copied Oxycodone warning from seeded and imported configs', () => {
+  const amanda = shared.buildAmandaConfig();
+  const oxyFromTemplate = amanda.meds.find(med => med.id === 'oxycodone');
+  assert(oxyFromTemplate, 'Amanda template should include Oxycodone');
+  assert.equal(oxyFromTemplate.warns.includes(shared.INCORRECT_OXY_WARNING), false);
+
+  const normalized = shared.normalizeConfig({
+    meds: [
+      {
+        id: 'oxycodone',
+        name: 'Oxycodone',
+        warns: [shared.INCORRECT_OXY_WARNING, 'Take with food if needed']
+      }
+    ]
+  });
+  assert.deepEqual(normalized.meds[0].warns, ['Take with food if needed']);
+});
