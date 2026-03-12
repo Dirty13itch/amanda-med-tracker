@@ -28,7 +28,7 @@
   --danger-bg:#3a1c1c;--danger-border:#c0392b;--warn-bg:#3a3018;--warn-border:#d4a017;
   --shadow:0 2px 12px rgba(0,0,0,.35);
 }}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.5;min-height:100vh;min-height:100dvh;-webkit-text-size-adjust:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.5;min-height:100vh;min-height:100dvh;-webkit-text-size-adjust:100%;overflow-x:hidden}
 header{background:linear-gradient(135deg,#2d3436,#636e72);color:#fff;padding:16px 20px;position:sticky;top:0;z-index:100;box-shadow:0 2px 12px rgba(0,0,0,.15)}
 /* iOS standalone: add safe-area padding */
 @supports(padding-top: env(safe-area-inset-top)){
@@ -105,9 +105,10 @@ body.bedside .summary-panel{background:#111}
 .log-remove:hover{color:var(--danger-border);background:var(--danger-bg)}
 .log-empty{text-align:center;color:var(--muted);padding:20px;font-size:14px}
 .log-tracked-note{font-size:12px;font-weight:600}
-.actions{display:flex;gap:8px;justify-content:center;padding:12px 0 32px}
-.actions button{padding:8px 16px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--muted);font-size:13px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:12px 0 32px}
+.actions button{width:100%;min-width:0;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--muted);font-size:13px;cursor:pointer;-webkit-tap-highlight-color:transparent;white-space:normal;text-align:center}
 .actions button:hover{border-color:var(--muted)}
+@media(min-width:640px){.actions{grid-template-columns:repeat(3,minmax(0,1fr))}}
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:400;display:flex;align-items:flex-end;justify-content:center;padding:0;opacity:1;transition:opacity .25s ease}
 .modal-overlay.hidden{display:none;opacity:0}
 .modal{background:var(--card);border-radius:20px 20px 0 0;padding:24px;padding-bottom:calc(24px + env(safe-area-inset-bottom,0px));max-width:500px;width:100%;box-shadow:0 -4px 32px rgba(0,0,0,.25);transform:translateY(0);transition:transform .3s cubic-bezier(.4,0,.2,1)}

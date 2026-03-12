@@ -14,6 +14,14 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+async function assertNoHorizontalOverflow(page, label) {
+  const metrics = await page.evaluate(() => ({
+    innerWidth: window.innerWidth,
+    scrollWidth: document.documentElement.scrollWidth
+  }));
+  assert(metrics.scrollWidth <= metrics.innerWidth + 1, `${label} should not overflow horizontally (viewport ${metrics.innerWidth}, scrollWidth ${metrics.scrollWidth})`);
+}
+
 async function waitForVisible(page, selector, timeout = 15000) {
   await page.waitForSelector(selector, { state: 'visible', timeout });
 }
@@ -111,6 +119,7 @@ async function runScratchScenario(browser, baseUrl) {
   try {
     await startScratch(page, baseUrl);
     await addScratchMedication(page);
+    await assertNoHorizontalOverflow(page, 'Scratch mobile layout');
     await page.locator('#settings-panel').getByRole('button', { name: '+ Add Warning' }).click();
     await page.getByPlaceholder('e.g. No NSAIDs for 2 weeks').fill('No grapefruit');
     await page.getByPlaceholder('Explain the warning or instruction').fill('Avoid grapefruit while this medication schedule is active.');
@@ -328,6 +337,7 @@ async function runPostSurgeryScenario(browser, baseUrl) {
     await waitForVisible(page, 'text=Choose a Starting Point');
     await page.locator('.welcome-tpl').filter({ hasText: 'Post-Surgery Recovery' }).click();
     await medicationCard(page, 'Oxycodone').waitFor({ state: 'visible', timeout: 15000 });
+    await assertNoHorizontalOverflow(page, 'Post-surgery mobile layout');
 
     await medicationCard(page, 'Oxycodone').getByRole('button', { name: 'Log Dose' }).click({ force: true });
     await waitForVisible(page, 'text=Also log Hydroxyzine');
