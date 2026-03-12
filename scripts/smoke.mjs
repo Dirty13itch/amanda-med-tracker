@@ -14,12 +14,78 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
-async function assertNoHorizontalOverflow(page, label) {
-  const metrics = await page.evaluate(() => ({
-    innerWidth: window.innerWidth,
-    scrollWidth: document.documentElement.scrollWidth
-  }));
-  assert(metrics.scrollWidth <= metrics.innerWidth + 1, `${label} should not overflow horizontally (viewport ${metrics.innerWidth}, scrollWidth ${metrics.scrollWidth})`);
+async function getLayoutIssues(page) {
+  return page.evaluate(() => {
+    const viewportWidth = window.innerWidth;
+    const docWidth = document.documentElement.scrollWidth;
+    const candidates = [document.body, ...document.body.querySelectorAll('*')];
+    const issues = [];
+    const textishTags = new Set(['BUTTON', 'A', 'SPAN', 'P', 'LABEL', 'STRONG', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
+
+    const describe = el => {
+      const id = el.id ? `#${el.id}` : '';
+      const className = typeof el.className === 'string'
+        ? '.' + el.className.trim().split(/\s+/).filter(Boolean).slice(0, 2).join('.')
+        : '';
+      const text = (el.innerText || el.value || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+      return `${el.tagName.toLowerCase()}${id}${className}${text ? ` "${text}"` : ''}`;
+    };
+
+    const isVisible = el => {
+      const style = getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+      const rect = el.getBoundingClientRect();
+      return rect.width > 1 && rect.height > 1;
+    };
+
+    for (const el of candidates) {
+      if (!isVisible(el)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.left < -1 || rect.right > viewportWidth + 1) {
+        issues.push({
+          type: 'viewport-overflow',
+          node: describe(el),
+          left: Math.round(rect.left),
+          right: Math.round(rect.right),
+          width: Math.round(rect.width)
+        });
+        continue;
+      }
+
+      const style = getComputedStyle(el);
+      const leafText = textishTags.has(el.tagName) && el.children.length === 0;
+      const contentOverflow = leafText
+        && el.clientWidth > 0
+        && el.scrollWidth > el.clientWidth + 4
+        && style.whiteSpace !== 'normal'
+        && style.overflowX === 'visible';
+      if (contentOverflow) {
+        issues.push({
+          type: 'content-overflow',
+          node: describe(el),
+          clientWidth: el.clientWidth,
+          scrollWidth: el.scrollWidth
+        });
+      }
+    }
+
+    return {
+      viewportWidth,
+      docWidth,
+      issues: issues.slice(0, 20)
+    };
+  });
+}
+
+async function assertHealthyLayout(page, label) {
+  const metrics = await getLayoutIssues(page);
+  assert(metrics.docWidth <= metrics.viewportWidth + 1, `${label} should not overflow horizontally (viewport ${metrics.viewportWidth}, scrollWidth ${metrics.docWidth})`);
+  assert(metrics.issues.length === 0, `${label} layout issues:\n${metrics.issues.map(issue => {
+    if (issue.type === 'viewport-overflow') {
+      return `- ${issue.node} extends outside viewport (${issue.left}..${issue.right}, width ${issue.width})`;
+    }
+    return `- ${issue.node} content overflows its box (${issue.clientWidth}px client / ${issue.scrollWidth}px scroll)`;
+  }).join('\n')}`);
 }
 
 async function waitForVisible(page, selector, timeout = 15000) {
@@ -78,6 +144,16 @@ async function closeSettings(page) {
   await page.locator('#settings-panel .settings-close').click();
 }
 
+async function startPostSurgery(page, baseUrl, name = 'QA') {
+  await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+  await waitForVisible(page, 'text=Welcome to Med Tracker');
+  await page.getByPlaceholder('Your name (optional)').fill(name);
+  await page.getByRole('button', { name: 'Get Started' }).click();
+  await waitForVisible(page, 'text=Choose a Starting Point');
+  await page.locator('.welcome-tpl').filter({ hasText: 'Post-Surgery Recovery' }).click();
+  await medicationCard(page, 'Oxycodone').waitFor({ state: 'visible', timeout: 15000 });
+}
+
 async function startScratch(page, baseUrl) {
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(1200);
@@ -119,7 +195,7 @@ async function runScratchScenario(browser, baseUrl) {
   try {
     await startScratch(page, baseUrl);
     await addScratchMedication(page);
-    await assertNoHorizontalOverflow(page, 'Scratch mobile layout');
+    await assertHealthyLayout(page, 'Scratch mobile layout');
     await page.locator('#settings-panel').getByRole('button', { name: '+ Add Warning' }).click();
     await page.getByPlaceholder('e.g. No NSAIDs for 2 weeks').fill('No grapefruit');
     await page.getByPlaceholder('Explain the warning or instruction').fill('Avoid grapefruit while this medication schedule is active.');
@@ -331,13 +407,8 @@ async function runScratchScenario(browser, baseUrl) {
 async function runPostSurgeryScenario(browser, baseUrl) {
   const { context, page, errors } = await newHarness(browser, 'post-surgery', { width: 390, height: 844 });
   try {
-    await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-    await waitForVisible(page, 'text=Welcome to Med Tracker');
-    await page.getByRole('button', { name: 'Get Started' }).click();
-    await waitForVisible(page, 'text=Choose a Starting Point');
-    await page.locator('.welcome-tpl').filter({ hasText: 'Post-Surgery Recovery' }).click();
-    await medicationCard(page, 'Oxycodone').waitFor({ state: 'visible', timeout: 15000 });
-    await assertNoHorizontalOverflow(page, 'Post-surgery mobile layout');
+    await startPostSurgery(page, baseUrl);
+    await assertHealthyLayout(page, 'Post-surgery mobile layout');
 
     await medicationCard(page, 'Oxycodone').getByRole('button', { name: 'Log Dose' }).click({ force: true });
     await waitForVisible(page, 'text=Also log Hydroxyzine');
@@ -390,6 +461,66 @@ async function runPostSurgeryScenario(browser, baseUrl) {
   }
 }
 
+async function runMobileLayoutAudit(browser, baseUrl) {
+  const viewports = [
+    { name: 'android-360', width: 360, height: 780 },
+    { name: 'iphone-390', width: 390, height: 844 },
+    { name: 'android-412', width: 412, height: 915 }
+  ];
+
+  for (const viewport of viewports) {
+    const { context, page, errors } = await newHarness(browser, `layout-${viewport.name}`, { width: viewport.width, height: viewport.height });
+    try {
+      await startPostSurgery(page, baseUrl, viewport.name);
+      await assertHealthyLayout(page, `${viewport.name} home`);
+
+      await page.locator('#warn-toggle-btn').click();
+      await assertHealthyLayout(page, `${viewport.name} warnings expanded`);
+
+      await page.locator('.actions').getByRole('button', { name: 'Medication List' }).click();
+      await page.getByRole('heading', { name: /medication list/i }).waitFor({ state: 'visible', timeout: 15000 });
+      await assertHealthyLayout(page, `${viewport.name} medication list modal`);
+      await page.getByRole('button', { name: 'Close' }).click({ force: true });
+
+      await page.getByRole('button', { name: 'Daily Review' }).click();
+      await waitForVisible(page, 'text=Fast caregiver summary');
+      await assertHealthyLayout(page, `${viewport.name} daily review modal`);
+      await page.getByRole('button', { name: 'Close' }).click({ force: true });
+
+      await medicationCard(page, 'Oxycodone').getByRole('button', { name: 'Log Dose' }).click({ force: true });
+      await waitForVisible(page, 'text=How many tablets?');
+      await assertHealthyLayout(page, `${viewport.name} multi-tab modal`);
+      await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click({ force: true });
+
+      await medicationCard(page, 'Diazepam').getByRole('button', { name: 'Review Timing' }).click({ force: true });
+      await waitForVisible(page, 'text=WARNING:');
+      await assertHealthyLayout(page, `${viewport.name} conflict modal`);
+      await page.keyboard.press('Escape');
+
+      await openSettings(page);
+      await assertHealthyLayout(page, `${viewport.name} settings`);
+
+      await page.locator('#settings-panel').getByText('Oxycodone').first().click();
+      await waitForVisible(page, 'text=Edit Medication');
+      await assertHealthyLayout(page, `${viewport.name} medication form`);
+
+      await page.locator('#settings-panel').getByRole('button', { name: 'Advanced Options' }).click();
+      await assertHealthyLayout(page, `${viewport.name} medication form advanced`);
+
+      await page.locator('#settings-panel .med-form').getByRole('button', { name: 'Cancel' }).click();
+      await closeSettings(page);
+
+      await page.getByRole('switch', { name: 'Toggle bedside night mode' }).click();
+      await waitForVisible(page, 'text=Next Up');
+      await assertHealthyLayout(page, `${viewport.name} bedside mode`);
+
+      assert(errors.length === 0, `${viewport.name} layout audit errors:\n${errors.join('\n')}`);
+    } finally {
+      await context.close();
+    }
+  }
+}
+
 async function runDesktopSanity(browser, baseUrl) {
   const { context, page, errors } = await newHarness(browser, 'desktop', { width: 1280, height: 900 });
   try {
@@ -438,6 +569,7 @@ async function main() {
     const baseUrl = providedBaseUrl || server.baseUrl;
     await runScratchScenario(browser, baseUrl);
     await runPostSurgeryScenario(browser, baseUrl);
+    await runMobileLayoutAudit(browser, baseUrl);
     await runDesktopSanity(browser, baseUrl);
     console.log('Smoke scenarios passed');
   } finally {

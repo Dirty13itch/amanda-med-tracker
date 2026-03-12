@@ -308,12 +308,16 @@ body.bedside *:focus-visible{outline-color:#ffeaa7}
 .med-list-item{display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .med-list-item:active{background:var(--border)}
 .med-list-swatch{width:14px;height:14px;border-radius:50%;flex-shrink:0}
-.med-list-info{flex:1}
+.med-list-info{flex:1;min-width:0}
 .med-list-name{font-weight:600;font-size:15px}
 .med-list-dose{font-size:13px;color:var(--muted)}
-.med-list-actions{display:flex;gap:4px}
+.med-list-actions{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;flex-shrink:0}
 .med-list-actions button{background:none;border:none;font-size:16px;color:var(--muted);cursor:pointer;padding:6px 8px;border-radius:4px;-webkit-tap-highlight-color:transparent}
 .med-list-actions button:hover{color:var(--text);background:var(--border)}
+@media(max-width:480px){
+  .med-list-item{align-items:flex-start;flex-wrap:wrap}
+  .med-list-actions{width:100%;padding-top:4px;justify-content:flex-start}
+}
 .btn-add-med{width:100%;padding:12px;border:2px dashed var(--border);border-radius:var(--radius);background:none;color:var(--muted);font-size:14px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent;margin-top:8px}
 .btn-add-med:hover{border-color:var(--muted);color:var(--text)}
 .med-form{background:var(--card);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);margin-bottom:16px}
