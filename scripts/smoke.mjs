@@ -144,6 +144,14 @@ async function closeSettings(page) {
   await page.locator('#settings-panel .settings-close').click();
 }
 
+async function commitFieldChange(page, selector, value) {
+  await page.locator(selector).evaluate((el, nextValue) => {
+    el.value = nextValue;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }, value);
+}
+
 async function startPostSurgery(page, baseUrl, name = 'QA') {
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
   await waitForVisible(page, 'text=Welcome to Med Tracker');
@@ -500,15 +508,41 @@ async function runMobileLayoutAudit(browser, baseUrl) {
       await openSettings(page);
       await assertHealthyLayout(page, `${viewport.name} settings`);
 
+      await commitFieldChange(page, '#cfg-name', 'Alexandria Catherine Montgomery-Rivera Recovery Tracker');
+      await commitFieldChange(page, '#settings-panel input[placeholder="e.g. Post-op recovery"]', 'Post-operative max clarity caregiver handoff mode');
+      await commitFieldChange(page, '#settings-panel input[placeholder="Name and phone"]', 'Shaun Montgomery-Rivera • 555-0100 ext 22');
+      await assertHealthyLayout(page, `${viewport.name} settings with long patient text`);
+
+      await page.locator('#settings-panel').getByRole('button', { name: '+ Add Warning' }).click();
+      await page.locator('#warning-title').fill('Do not combine sedating medications with alcohol, sleep aids, or unapproved supplements');
+      await page.locator('#warning-text').fill('If anything seems off, stop and verify the timing before logging another dose. Use the handoff summary to double-check the last action first.');
+      await page.locator('#warning-type').selectOption('danger');
+      await page.getByRole('button', { name: 'Save Warning' }).click();
+      await assertHealthyLayout(page, `${viewport.name} settings with long warning`);
+
       await page.locator('#settings-panel').getByText('Oxycodone').first().click();
       await waitForVisible(page, 'text=Edit Medication');
       await assertHealthyLayout(page, `${viewport.name} medication form`);
 
+      await page.locator('#mf-brand').fill('Immediate Release Tablet');
+      await page.locator('#mf-purpose').fill('Breakthrough pain relief during overnight recovery');
+      await page.locator('#mf-instructions').fill('Use only when the pain is not controlled and confirm the last logged sedating medication before taking.');
+      await assertHealthyLayout(page, `${viewport.name} medication form with long content`);
+
       await page.locator('#settings-panel').getByRole('button', { name: 'Advanced Options' }).click();
       await assertHealthyLayout(page, `${viewport.name} medication form advanced`);
 
-      await page.locator('#settings-panel .med-form').getByRole('button', { name: 'Cancel' }).click();
+      await page.locator('#settings-panel .med-form').getByRole('button', { name: 'Save' }).click();
+      await assertHealthyLayout(page, `${viewport.name} settings after long med save`);
       await closeSettings(page);
+
+      const warningsExpanded = await page.locator('#warn-toggle-btn').getAttribute('aria-expanded');
+      if (warningsExpanded !== 'true') {
+        await page.locator('#warn-toggle-btn').click();
+      }
+      await assertHealthyLayout(page, `${viewport.name} home with long warning text`);
+      await page.locator('#warn-toggle-btn').click();
+      await assertHealthyLayout(page, `${viewport.name} home with long med content`);
 
       await page.getByRole('switch', { name: 'Toggle bedside night mode' }).click();
       await waitForVisible(page, 'text=Next Up');

@@ -367,6 +367,25 @@ body.bedside *:focus-visible{outline-color:#ffeaa7}
 .error-msg{font-size:12px;color:var(--danger-border);margin-top:2px}
 .toast{position:fixed;bottom:80px;left:50%;transform:translateX(-50%) translateY(20px);background:#2d3436;color:#fff;padding:10px 20px;border-radius:10px;font-size:14px;font-weight:600;z-index:500;opacity:0;transition:opacity .3s,transform .3s;pointer-events:none}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+@media(max-width:480px){
+  main{padding:10px}
+  .tracked-total-header,.care-summary-header,.card-top,.nuc-header,.settings-header,.log-entry,.modal-actions,.import-actions,.config-share,.med-form-row,.ts-custom,.alert-banner,.update-banner{flex-direction:column;align-items:stretch}
+  .care-summary-actions,.summary-action,.ab-actions{width:100%}
+  .summary-action,.ab-log,.update-banner button{justify-content:center}
+  .tracked-total-header,.care-summary-header,.settings-header{gap:8px}
+  .metric-label{flex-direction:column;align-items:flex-start;gap:2px}
+  .card-top>div:first-child,.nuc-header>div:first-child{min-width:0}
+  .card-badge{white-space:normal;max-width:48%;text-align:right}
+  .log-entry{gap:6px}
+  .log-time{min-width:0}
+  .completion-dots{flex-wrap:wrap}
+  .modal{padding:20px;padding-bottom:calc(20px + env(safe-area-inset-bottom,0px))}
+  .modal-tab{min-width:0}
+  .config-share,.import-actions{grid-template-columns:1fr;display:grid}
+  .storage-health{grid-template-columns:1fr}
+  .med-form-actions{flex-direction:column}
+  .welcome-card{padding:24px 20px}
+}
 @media print{
   header{position:static;background:#333!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .btn-log,.log-remove,.actions,.next-up{display:none!important}
