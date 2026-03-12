@@ -890,14 +890,11 @@ function renderLog() {
   const todayTotal=state.doses.filter(d=>fmt(d.time,'date')===t).reduce((s,d)=>s+d.tabs,0);
   countEl.textContent = todayTotal > 0 ? `(${todayTotal} today)` : '';
   if(!sorted.length){previewEl.innerHTML='<div class="log-empty">No doses logged yet</div>';fullEl.innerHTML='';return;}
-  // Build running totals for all meds that have trackTotal
   const trackedTotals={};
-  const trackedMedIds=new Set(MEDS.filter(m=>m.trackTotal).map(m=>m.id));
-  const trackedRunning={};
-  [...state.doses].sort((a,b)=>new Date(a.time)-new Date(b.time)).forEach(d=>{
-    if(trackedMedIds.has(d.medId) && (d.actionType || 'dose') !== 'skip'){
-      trackedRunning[d.medId]=(trackedRunning[d.medId]||0)+d.mg;
-      trackedTotals[d.id]=trackedRunning[d.medId];
+  [...state.doses].forEach(d => {
+    const med = getMed(d.medId);
+    if (med && med.trackTotal && (d.actionType || 'dose') !== 'skip') {
+      trackedTotals[d.id] = rolling24hTotal(d.medId, d.time);
     }
   });
   const renderEntry = d => {
@@ -905,7 +902,7 @@ function renderLog() {
     const isSkip = (d.actionType || 'dose') === 'skip';
     const tabLabel=isSkip ? 'Skipped scheduled dose' : (d.tabs>1?`${d.tabs} tabs`:'1 tab');
     const mgLabel=!isSkip&&d.mg?` (${d.mg}mg)`:''; 
-    const trackedNote=(med&&med.trackTotal&&!isSkip)?`<div class="log-tracked-note" style="color:${med.color}">Running total: ${trackedTotals[d.id]||0}mg</div>`:'';
+    const trackedNote=(med&&med.trackTotal&&!isSkip)?`<div class="log-tracked-note" style="color:${med.color}">24hr total: ${trackedTotals[d.id]||0}mg</div>`:'';
     const auditBits = [];
     if (d.loggedBy) auditBits.push(`Logged by ${esc(d.loggedBy)}`);
     if (d.overrideType) auditBits.push(`Override: ${esc(d.overrideType)}`);

@@ -145,7 +145,7 @@ async function runScratchScenario(browser, baseUrl) {
     await page.getByRole('button', { name: '30m ago' }).click();
     await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click({ force: true });
     await waitForVisible(page, 'text=Available in');
-    await waitForVisible(page, 'text=Running total: 400mg');
+    await waitForVisible(page, 'text=24hr total: 400mg');
 
     await page.getByRole('button', { name: /Remove Ibuprofen dose at/ }).click();
     await page.getByRole('button', { name: 'Remove', exact: true }).click();
@@ -219,6 +219,17 @@ async function runScratchScenario(browser, baseUrl) {
     });
     assert(retroDose, 'Retroactive dose should be logged');
     assert(retroDose.overrideType === '', `Retroactive historical dose should not be marked as an early override (found ${retroDose.overrideType || 'none'})`);
+    await page.getByRole('button', { name: /Edit Ibuprofen entry at/ }).nth(1).click();
+    const olderEditTime = await page.evaluate(() => {
+      const target = new Date();
+      target.setDate(target.getDate() - 2);
+      return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}-${String(target.getDate()).padStart(2, '0')}T${String(target.getHours()).padStart(2, '0')}:${String(target.getMinutes()).padStart(2, '0')}`;
+    });
+    await page.locator('#edit-dose-time').fill(olderEditTime);
+    await page.getByRole('button', { name: 'Save Changes' }).click();
+    const trackedNotes = await page.locator('.log-tracked-note').allInnerTexts();
+    assert(trackedNotes.length >= 2, 'Expected tracked totals in the dose log');
+    assert(trackedNotes.every(note => note.trim() === '24hr total: 200mg'), `Dose log should show rolling 24-hour totals, found: ${trackedNotes.join(' | ')}`);
 
     await openSettings(page);
     const refreshedBackupDownload = page.waitForEvent('download');
@@ -290,9 +301,9 @@ async function runScratchScenario(browser, baseUrl) {
       await medicationCard(page, 'Ibuprofen').getByRole('button', { name: 'Log Dose' }).click({ force: true });
       await page.getByRole('button', { name: /1 tab 200mg/ }).click();
       await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click({ force: true });
-      await waitForVisible(page, 'text=Running total: 200mg');
+      await waitForVisible(page, 'text=24hr total: 200mg');
       await page.reload({ waitUntil: 'domcontentloaded' });
-      await waitForVisible(page, 'text=Running total: 200mg');
+      await waitForVisible(page, 'text=24hr total: 200mg');
       await context.setOffline(false);
     }
 
