@@ -1624,6 +1624,18 @@ function handleLog(medId) {
         </div>`);
       return;
     }
+    // NSAID restriction: block during first 14 recovery days
+    if (med.category === 'nsaid') {
+      const day = getRecoveryDay();
+      if (day >= 0 && day < 14) {
+        showModal(`<h3>⛔ ${esc(med.name)} blocked</h3>
+          <p><strong>No NSAIDs for 14 days after surgery.</strong></p>
+          <p>NSAIDs (ibuprofen, naproxen, aspirin) increase bleeding risk at the surgical site. You are on post-op day ${day}.</p>
+          <p>Use Tylenol for pain instead. Contact your surgeon if you need stronger pain relief.</p>
+          <div class="modal-actions"><button class="btn-confirm" onclick="closeModal()">OK</button></div>`);
+        return;
+      }
+    }
     if(med.conflictsWith) return showConflictModal(med);
     if(med.trackTotal) return showTrackedModal(med);
     if(med.maxTabs>1||findPairedMeds(medId).length>0) return showMultiTabModal(med);

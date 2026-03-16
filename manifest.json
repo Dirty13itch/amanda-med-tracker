@@ -1,6 +1,7 @@
 {
   "name": "Med Tracker",
   "short_name": "Meds",
+  "id": "med-tracker",
   "description": "Personal medication tracker",
   "start_url": "/",
   "display": "standalone",

@@ -85,7 +85,7 @@ const AMANDA_MEDS = [
     purpose: 'Pain Relief',
     reason: 'Baseline pain control',
     freq: '1000mg four times daily',
-    intervalMin: 240,
+    intervalMin: 360,
     color: 'var(--tyl)',
     bgBadge: '#fff3e0',
     scheduled: false,
@@ -117,9 +117,10 @@ const AMANDA_MEDS = [
     scheduledTimes: [],
     isPrn: true,
     instructions: 'Take WITH Oxycodone if experiencing nausea or itching. Only log when actually taken.',
-    warns: ['Take together with Oxycodone'],
+    warns: ['Take together with Oxycodone', 'May add to drowsiness from opioids'],
     category: 'antiemetic',
-    pairedWith: 'oxycodone'
+    pairedWith: 'oxycodone',
+    maxDoses: 4
   },
   {
     id: 'diazepam',
@@ -140,10 +141,10 @@ const AMANDA_MEDS = [
     scheduledTimes: [],
     isPrn: true,
     instructions: 'Do not take too close to Oxycodone.',
-    warns: ['DO NOT take within 2 hours of Oxycodone — respiratory depression risk'],
+    warns: ['Opioid + benzodiazepine: FDA black-box warning. Minimum 4-hour separation. Monitor for excessive sedation or slowed breathing.'],
     category: 'benzodiazepine',
     conflictsWith: 'oxycodone',
-    conflictMin: 120
+    conflictMin: 240
   },
   {
     id: 'cephalexin',
