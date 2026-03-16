@@ -508,12 +508,25 @@ function format12h(timeStr) {
 }
 
 function renderLoggerField() {
-  if (CONFIG.profile?.defaultLoggerName) return '';
+  const defaultName = CONFIG.profile?.defaultLoggerName;
+  if (defaultName) {
+    return `<div class="settings-field" style="margin-top:8px"><label>Logging as</label><div style="display:flex;align-items:center;gap:8px"><strong>${esc(defaultName)}</strong><button type="button" style="font-size:12px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--card);color:var(--muted);cursor:pointer" onclick="this.parentElement.nextElementSibling.style.display='';this.style.display='none'">Change</button></div><input type="text" id="modal-logger" style="display:none;margin-top:4px" placeholder="Different caregiver name" value=""></div>`;
+  }
   return '<div class="settings-field" style="margin-top:8px"><label>Who\'s logging this?</label><input type="text" id="modal-logger" placeholder="Your name" value=""></div>';
 }
 
 function getModalLoggerName() {
   const el = document.getElementById('modal-logger');
+  const override = el && el.style.display !== 'none' ? el.value.trim() : '';
+  return override || (CONFIG.profile?.defaultLoggerName || '');
+}
+
+function renderSymptomField() {
+  return '<div class="settings-field" style="margin-top:8px"><label>Symptoms / side effects <span style="color:var(--muted);font-weight:400">(optional)</span></label><input type="text" id="modal-symptom" placeholder="e.g. nausea, drowsiness, itching" value=""></div>';
+}
+
+function getModalSymptomNote() {
+  const el = document.getElementById('modal-symptom');
   return el ? el.value.trim() : '';
 }
 
@@ -758,6 +771,7 @@ function handleEditDose(id) {
   showModal(`<h3>Edit ${esc(med.name)} entry</h3>
     <div class="settings-field"><label>Logged time</label><input type="datetime-local" id="edit-dose-time" value="${toDateTimeLocalValue(dose.time)}"></div>
     ${dose.actionType === 'skip' ? '<p>This is a skipped scheduled dose.</p>' : `<div class="settings-field"><label>Tabs</label><input type="number" id="edit-dose-tabs" min="1" max="${med.maxTabs || 4}" value="${tabsValue}"></div>`}
+    <div class="settings-field"><label>Symptoms / side effects</label><input type="text" id="edit-dose-symptom" value="${esc(dose.symptomNote || '')}" placeholder="e.g. nausea, drowsiness, itching"></div>
     <div class="settings-field"><label>Note</label><textarea id="edit-dose-note" placeholder="Optional note">${esc(dose.note || '')}</textarea></div>
     <div class="settings-field"><label>Logged By</label><input type="text" id="edit-dose-logger" value="${esc(dose.loggedBy || '')}" placeholder="Who logged this?"></div>
     <div class="modal-actions">
@@ -780,6 +794,8 @@ function saveEditedDose(id) {
   dose.time = nextTime;
   dose.tabs = nextTabs;
   dose.mg = dose.actionType === 'skip' ? 0 : med.perTab * nextTabs;
+  const symptomInput = document.getElementById('edit-dose-symptom');
+  dose.symptomNote = symptomInput ? symptomInput.value.trim() : (dose.symptomNote || '');
   dose.note = noteInput ? noteInput.value.trim() : dose.note;
   dose.loggedBy = loggerInput ? loggerInput.value.trim() : dose.loggedBy;
   dose.scheduledFor = med.scheduleType === 'scheduled' ? (readiness.scheduledDueAt || dose.scheduledFor || '') : '';
@@ -800,12 +816,14 @@ function undoLastDose() {
     showToast('Nothing to undo');
     return;
   }
-  const before = state.doses.length;
-  state.doses = state.doses.filter(d => d.id !== action.doseId);
-  if (state.doses.length === before) {
+  const dose = state.doses.find(d => d.id === action.doseId);
+  if (!dose) {
     showToast('Nothing to undo');
     return;
   }
+  // Soft-delete: mark as removed rather than hard-deleting for audit trail
+  dose.actionType = 'removed';
+  dose.removedAt = now().toISOString();
   state.lastAction = { type: 'undo-add', doseId: action.doseId };
   save();
   render();
@@ -1034,6 +1052,7 @@ function renderLog() {
     if (d.loggedBy) auditBits.push(`Logged by ${esc(d.loggedBy)}`);
     if (d.overrideType) auditBits.push(`Override: ${esc(d.overrideType)}`);
     if (d.overrideReason) auditBits.push(`Reason: ${esc(d.overrideReason)}`);
+    if (d.symptomNote) auditBits.push(`Symptom: ${esc(d.symptomNote)}`);
     if (d.note) auditBits.push(esc(d.note));
     const auditHtml = auditBits.length ? `<div class="card-note">${auditBits.join(' • ')}</div>` : '';
     return `<div class="log-entry">
@@ -1662,6 +1681,7 @@ function handleLog(medId) {
       <p>${esc(med.dose)}</p>${buildIntervalWarning(info)}
       ${renderTimeSelector()}
       ${renderLoggerField()}
+      ${renderSymptomField()}
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeModal()">Cancel</button>
         ${renderScheduledSkipButton(med, info)}
@@ -1709,8 +1729,9 @@ function confirmMultiTab() {
     const doseTime = getDoseTime();
     const pairedMedIds = [...document.querySelectorAll('[data-paired-med]')].filter(cb => cb.checked).map(cb => cb.dataset.pairedMed);
     const loggedBy = CONFIG.profile?.defaultLoggerName || getModalLoggerName();
+    const symptomNote = getModalSymptomNote();
     const primaryAdded = addDose(window._modalMedId, window._modalTabVal||1, doseTime, {
-      loggedBy,
+      loggedBy, symptomNote,
       pairedMedIds
     });
     if (!primaryAdded) return;
@@ -1767,6 +1788,7 @@ function confirmSingleDose(medId, tabs, userOverrideReason) {
       : (info ? info.blockReason : '');
     const added = addDose(medId, tabs||1, doseTime, {
       loggedBy: CONFIG.profile?.defaultLoggerName || getModalLoggerName(),
+      symptomNote: getModalSymptomNote(),
       overrideType: info && (info.conflictBlocked ? 'conflict' : info.intervalBlocked ? 'early' : ''),
       overrideReason
     });
@@ -1794,6 +1816,7 @@ function confirmTracked() {
     }
     const added = addDose(window._modalMedId, tabs, doseTime, {
       loggedBy: CONFIG.profile?.defaultLoggerName || getModalLoggerName(),
+      symptomNote: getModalSymptomNote(),
       overrideType: info.intervalBlocked ? 'early' : '',
       overrideReason: info.blockReason
     });
@@ -2625,7 +2648,7 @@ function buildHandoffSummaryText() {
     lines.push(`${med.name}: ${status.text}`);
     lines.push(`  Dose: ${med.dose} | Frequency: ${med.freq}`);
     if (med.scheduleType === 'scheduled' && med.scheduledTimes?.length) lines.push(`  Scheduled: ${med.scheduledTimes.map(format12h).join(', ')}`);
-    if (info.last) lines.push(`  Last logged: ${fmt(info.last.time)}`);
+    if (info.last) lines.push(`  Last logged: ${fmt(info.last.time)}${info.last.loggedBy ? ' by ' + info.last.loggedBy : ''}`);
     if (supply !== null) lines.push(`  Supply left: ${supply} ${getSupplyLabel(med)}`);
     if (med.prescriber) lines.push(`  Prescriber: ${med.prescriber}`);
     if (med.instructions) lines.push(`  Instructions: ${med.instructions}`);
@@ -2657,6 +2680,7 @@ function buildHandoffSummaryText() {
       const override = d.overrideType ? ` [OVERRIDE: ${d.overrideType}]` : '';
       const logger = d.loggedBy ? ` by ${d.loggedBy}` : '';
       lines.push(`  ${fmt(d.time)} — ${name}: ${action}${override}${logger}`);
+      if (d.symptomNote) lines.push(`    Symptom: ${d.symptomNote}`);
       if (d.note) lines.push(`    Note: ${d.note}`);
     });
   }
@@ -2685,7 +2709,7 @@ function openHandoffSummary() {
       <div class="summary-item"><strong>Status</strong>${esc(status.text)}</div>
       <div class="summary-item" style="margin-top:6px"><strong>Dose</strong>${esc(med.dose)} • ${esc(med.freq)}</div>
       ${med.scheduleType === 'scheduled' && med.scheduledTimes?.length ? `<div class="summary-item" style="margin-top:6px"><strong>Scheduled</strong>${esc(med.scheduledTimes.map(format12h).join(', '))}</div>` : ''}
-      ${info.last ? `<div class="summary-item" style="margin-top:6px"><strong>Last logged</strong>${esc(fmt(info.last.time))}</div>` : ''}
+      ${info.last ? `<div class="summary-item" style="margin-top:6px"><strong>Last logged</strong>${esc(fmt(info.last.time))}${info.last.loggedBy ? ' by ' + esc(info.last.loggedBy) : ''}</div>` : ''}
       ${supply !== null ? `<div class="summary-item" style="margin-top:6px"><strong>Supply left</strong>${supply} ${esc(getSupplyLabel(med))}</div>` : ''}
       ${med.instructions ? `<div class="summary-item" style="margin-top:6px"><strong>Instructions</strong>${esc(med.instructions)}</div>` : ''}
     </div>`;
