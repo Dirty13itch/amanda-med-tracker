@@ -128,14 +128,16 @@ function persistBundle(reason) {
     })
     .catch(error => {
       captureError(error, reason);
-      // Show visible warning when data persistence fails — user needs to know their dose may not be saved
+      // Show blocking modal when data persistence fails — user must know their dose was NOT durably saved
       try {
-        const banner = document.createElement('div');
-        banner.className = 'card-warn';
-        banner.style.cssText = 'position:fixed;bottom:60px;left:10px;right:10px;z-index:9999;padding:12px;font-size:13px;text-align:center;border-radius:8px;animation:fadeIn 0.3s';
-        banner.innerHTML = '<strong>⚠️ Save failed</strong> — your last change may not be saved. <a href="#" onclick="downloadFullBackup();this.parentNode.remove();return false" style="color:inherit;text-decoration:underline">Back up now</a> <button onclick="this.parentNode.remove()" style="margin-left:8px;background:none;border:none;color:inherit;cursor:pointer;font-size:16px">&times;</button>';
-        document.body.appendChild(banner);
-        setTimeout(() => { if (banner.parentNode) banner.remove(); }, 15000);
+        const isQuota = error && (error.name === 'QuotaExceededError' || /quota/i.test(error.message));
+        showModal(`<h3>⚠️ Save Failed</h3>
+          <p><strong>Your last change was NOT saved to storage.</strong></p>
+          <p>${isQuota ? 'Device storage is full. Free up space or download a backup immediately.' : 'A storage error occurred. Download a backup to protect your data.'}</p>
+          <div class="modal-actions" style="flex-direction:column;gap:8px">
+            <button class="btn-danger" onclick="downloadFullBackup();closeModal()">Download Backup Now</button>
+            <button class="btn-cancel" onclick="closeModal()">Dismiss</button>
+          </div>`);
       } catch (e) { /* UI error during error handling — swallow */ }
       return null;
     });
@@ -1231,10 +1233,12 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-// Safety net: flush state to localStorage on tab close/hide (IDB write may be in-flight)
+// Safety net: flush state + config to localStorage on tab close/hide (IDB write may be in-flight)
 window.addEventListener('pagehide', () => {
   try {
-    if (state && state.doses && state.doses.length > 0) {
+    // Only write if there's meaningful data (doses exist or config has been personalized)
+    const hasData = (state && state.doses && state.doses.length > 0) || (CONFIG && CONFIG.patientName);
+    if (hasData) {
       localStorage.setItem(DOSES_KEY, JSON.stringify(state));
       localStorage.setItem(CONFIG_KEY, JSON.stringify(CONFIG));
     }

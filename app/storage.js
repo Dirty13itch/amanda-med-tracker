@@ -71,8 +71,13 @@ async function writeStoreValues(cache, entries) {
     for (const [key, value] of entries) {
       store.put(value, key);
     }
-    tx.oncomplete = () => resolve(true);
-    tx.onerror = () => reject(tx.error || new Error('Failed to persist state'));
+    // Timeout: abort hung transactions after 5 seconds to prevent blocking all future saves
+    const timeout = setTimeout(() => {
+      try { tx.abort(); } catch(e) {}
+      reject(new Error('IDB write timed out after 5s'));
+    }, 5000);
+    tx.oncomplete = () => { clearTimeout(timeout); resolve(true); };
+    tx.onerror = () => { clearTimeout(timeout); reject(tx.error || new Error('Failed to persist state')); };
   });
 }
 
