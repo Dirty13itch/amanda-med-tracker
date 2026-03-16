@@ -461,7 +461,12 @@ async function runPostSurgeryScenario(browser, baseUrl) {
     await pairedCheckbox.check({ force: true });
     await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: /^Log/ }).click({ force: true });
     if (await page.locator('text=Possible duplicate').count()) {
-      await page.getByRole('button', { name: /Confirm Separate|Log Anyway/ }).click();
+      // Wait for 5-second countdown to enable the button
+      await page.waitForFunction(() => {
+        const btn = document.getElementById('dup-confirm-btn');
+        return btn && !btn.disabled;
+      }, { timeout: 10000 });
+      await page.locator('#dup-confirm-btn').click();
     }
     await waitForVisible(page, 'text=2 today');
     const hydroTimerAfterPairedLog = await medicationCard(page, 'Hydroxyzine').locator('.card-timer').innerText();

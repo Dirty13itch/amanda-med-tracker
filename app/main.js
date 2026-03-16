@@ -617,9 +617,17 @@ function showDuplicateDoseModal(medId, tabs, doseTime, options) {
     <p>${esc(med.name)} already has a dose logged within ${DUPLICATE_WINDOW_MIN} minutes of ${fmt(doseTime,'time')}.</p>
     <div class="warn-box"><strong>Are you sure this was a separate dose?</strong> Double-dosing can be dangerous, especially with opioids and sedatives.</div>
     <div class="modal-actions">
-      <button class="btn-cancel" onclick="closeModal()">Cancel — Not a New Dose</button>
-      <button class="btn-danger" onclick="confirmDuplicateDose()">Yes, Confirm Separate Dose</button>
+      <button class="btn-confirm" onclick="closeModal()">No — I Already Took It</button>
+      <button class="btn-cancel" id="dup-confirm-btn" disabled onclick="confirmDuplicateDose()" style="opacity:0.5">Yes, This Is a Second Dose (5s)</button>
     </div>`);
+  let countdown = 5;
+  const dupBtn = document.getElementById('dup-confirm-btn');
+  const dupTick = setInterval(() => {
+    countdown--;
+    if (!dupBtn) { clearInterval(dupTick); return; }
+    dupBtn.textContent = countdown > 0 ? `Yes, This Is a Second Dose (${countdown}s)` : 'Yes, This Is a Second Dose';
+    if (countdown <= 0) { clearInterval(dupTick); dupBtn.disabled = false; dupBtn.style.opacity = '1'; dupBtn.className = 'btn-danger'; }
+  }, 1000);
 }
 
 function confirmDuplicateDose() {
@@ -675,7 +683,7 @@ function addDose(medId, tabs, customTime, options) {
     render();
     maybeRequestNotifications();
     dismissAlertBanner();
-    showToast(`${med.name} logged`);
+    showToast(`✓ ${med.name} logged — ${tabs} tab${tabs>1?'s':''} (${tabs * med.perTab}${med.unitLabel || 'mg'})`, 5000);
     return true;
   } catch (e) {
     console.error('addDose error:', e);
@@ -1102,9 +1110,10 @@ function showAlertBanner(text, isOverdue, medId) {
   positionAlertBanner();
   textEl.textContent = text;
   banner.className = 'alert-banner ab-visible ' + (isOverdue ? 'ab-overdue' : 'ab-ready');
+  logBtn.textContent = isOverdue ? 'Open' : 'Open';
   logBtn.onclick = () => { dismissAlertBanner(); handleLog(medId); };
   clearTimeout(alertBannerTimeout);
-  alertBannerTimeout = setTimeout(dismissAlertBanner, 30000); // auto-dismiss after 30s
+  alertBannerTimeout = setTimeout(dismissAlertBanner, isOverdue ? 120000 : 30000);
 }
 
 function dismissAlertBanner() {
@@ -1353,7 +1362,7 @@ function buildIntervalWarning(info) {
 function buildConflictWarning(info) {
   if (!info.conflictBlocked) return '';
   const conflictName = info.conflictMed ? info.conflictMed.name : info.med.conflictsWith;
-  return `<div class="warn-box"><strong>WARNING:</strong> ${esc(conflictName)} was taken ${minsToHM(info.conflictAgo)} ago. You should wait at least ${formatIntervalLabel(info.conflictMin || info.med.conflictMin)} between ${esc(conflictName)} and ${esc(info.med.name)}. Recommend waiting ${Math.ceil(info.conflictRemaining)} more minutes.</div>`;
+  return `<div class="warn-box"><strong>⛔ Too soon after ${esc(conflictName)}</strong><div style="font-size:20px;font-weight:800;margin:8px 0">Wait ${minsToHM(Math.ceil(info.conflictRemaining))} more</div><div>Taking these together increases the risk of breathing problems.</div></div>`;
 }
 function renderScheduledSkipButton(med, info) {
   if (!med || med.scheduleType !== 'scheduled' || !info || !info.isScheduled || info.minutesUntilEligible > 0) return '';
@@ -1820,7 +1829,10 @@ function toggleNqiItem(medId) {
 // Auto-collapse warnings after day 2
 function initWarningsState() {
   const day = getRecoveryDay();
-  if (day >= 2 || day < 0) {
+  // Don't auto-collapse if danger-level warnings exist (e.g. opioid+benzo)
+  const hasDangerWarnings = WARNINGS.some(w => w.type === 'danger') ||
+    (MEDS.some(m => !m.archived && m.category === 'opioid') && MEDS.some(m => !m.archived && m.category === 'benzodiazepine'));
+  if (!hasDangerWarnings && (day >= 2 || day < 0)) {
     warningsCollapsed = true;
     const content = document.getElementById('warnings-content');
     const chevron = document.getElementById('warn-chevron');
@@ -2364,13 +2376,13 @@ function deleteWarning(index) {
 }
 
 // === Config Export/Import ===
-function showToast(msg) {
+function showToast(msg, duration = 3500) {
   let toast = document.querySelector('.toast');
   if(!toast) { toast = document.createElement('div'); toast.className='toast'; document.body.appendChild(toast); }
   toast.textContent = msg;
   toast.classList.add('show');
   clearTimeout(toast._tid);
-  toast._tid = setTimeout(()=>toast.classList.remove('show'), 2500);
+  toast._tid = setTimeout(()=>toast.classList.remove('show'), duration);
 }
 function downloadJsonFile(filename, payload) {
   const blob = new Blob([JSON.stringify(payload, (k, v) => v === Infinity ? 99999 : v, 2)], { type: 'application/json' });

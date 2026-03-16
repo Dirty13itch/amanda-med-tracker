@@ -190,7 +190,11 @@ body.bedside{--bg:#000;--card:#0d0d0d;--text:#e8c9a0;--muted:#7a6248;--border:#1
 body.bedside header{background:#000;box-shadow:none;color:var(--text)}
 body.bedside .header-meta span:not(.clock){display:none}
 body.bedside .header-meta .clock{color:#e8c9a0;font-size:24px;letter-spacing:0.5px}
-body.bedside .warnings,body.bedside .med-cards,body.bedside .log-section,body.bedside .actions{display:none}
+body.bedside .med-cards,body.bedside .log-section,body.bedside .actions{display:none}
+body.bedside .warnings .alert-warn{display:none}
+body.bedside .warnings .alert-danger{font-size:16px;padding:12px 16px}
+body.bedside .warnings-toggle{display:none}
+body.bedside .warnings-content{max-height:none!important;overflow:visible!important}
 body.bedside .next-up-card{padding:28px}
 body.bedside .nuc-name{font-size:28px}
 body.bedside .nuc-dose{font-size:18px}
@@ -277,7 +281,7 @@ body.bedside .config-share .btn-import{background:#1a1a1a;border:1px solid #2a2a
 .recovery-note.rn-info{background:rgba(41,128,185,.1);border-color:var(--ceph);color:var(--ceph)}
 .recovery-note.rn-success{background:rgba(0,184,148,.1);border-color:var(--success);color:var(--success)}
 .recovery-note.rn-warn{background:var(--warn-bg);border-color:var(--warn-border);color:var(--warn-border)}
-body.bedside .recovery-note,body.bedside .warnings{display:none}
+body.bedside .recovery-note{display:none}
 /* Phase 5: Polish â€” touch targets, transitions, reduced motion */
 .log-remove{min-width:48px;min-height:48px;display:flex;align-items:center;justify-content:center}
 .btn-reminder{min-height:48px}
