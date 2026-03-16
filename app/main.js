@@ -1319,6 +1319,41 @@ async function confirmClearAllData() {
   showToast('Dose history cleared');
 }
 
+function handleFactoryReset() {
+  showModal(`<h3>Delete all data?</h3>
+    <p><strong>This will permanently erase everything:</strong> all medications, dose history, patient profile, and settings.</p>
+    <p>Consider downloading a backup first.</p>
+    <div class="modal-actions" style="flex-direction:column;gap:8px">
+      <button class="btn-confirm" onclick="downloadFullBackup();closeModal()">Download Backup First</button>
+      <button class="btn-danger" onclick="confirmFactoryReset()">Delete Everything</button>
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+    </div>`);
+}
+async function confirmFactoryReset() {
+  try {
+    // Clear all localStorage keys used by the app
+    [CONFIG_KEY, DOSES_KEY, BEDSIDE_KEY, 'amanda-meds-v1', 'medtracker-bedside-v1'].forEach(k => {
+      try { localStorage.removeItem(k); } catch(e) {}
+    });
+    // Delete the IndexedDB database entirely
+    if (window.indexedDB) {
+      try { indexedDB.deleteDatabase('medtracker'); } catch(e) {}
+    }
+    // Unregister service worker
+    if (navigator.serviceWorker) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for (const reg of regs) { await reg.unregister(); }
+    }
+    // Clear caches
+    if (window.caches) {
+      const keys = await caches.keys();
+      for (const key of keys) { await caches.delete(key); }
+    }
+  } catch(e) { console.warn('Factory reset cleanup error:', e); }
+  closeModal();
+  location.reload();
+}
+
 // === New Surgery Flow ===
 function prepareForNewSurgery() {
   const activeMeds = getDisplayMeds();
@@ -2108,6 +2143,10 @@ function renderDataSettingsSection() {
     </div>
     <div id="import-area"></div>
     <div id="backup-import-area"></div>
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border)">
+      <button class="btn-danger" style="width:100%;font-size:13px" onclick="handleFactoryReset()">Delete All My Data</button>
+      <p style="font-size:11px;color:var(--muted);margin-top:4px">Permanently erases all data from this device. Cannot be undone.</p>
+    </div>
   </div>`;
 }
 
@@ -2504,7 +2543,7 @@ async function downloadFullBackup() {
   downloadJsonFile(`medtracker-backup-${todayStr()}.json`, envelope);
   renderSettingsPanel();
   renderCareSummary();
-  showToast('Full backup downloaded');
+  showToast('Backup downloaded — contains sensitive health data, store securely', 5000);
 }
 function showBackupImportField() {
   const area = document.getElementById('backup-import-area');
@@ -3534,6 +3573,7 @@ Object.assign(window, {
   closeModal,
   closeSettings,
   confirmClearAllData,
+  confirmFactoryReset,
   confirmPendingAction,
   confirmDuplicateDose,
   confirmMultiTab,
@@ -3551,6 +3591,7 @@ Object.assign(window, {
   quickEditMed,
   exportConfig,
   handleClear,
+  handleFactoryReset,
   handleEditDose,
   handleExport,
   handleLog,
