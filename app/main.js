@@ -922,6 +922,7 @@ function renderCareSummary() {
         <div class="summary-item"><strong>Allergies</strong>${profile.allergies.length ? `<div class="summary-list">${profile.allergies.map(item => `<span class="summary-chip">${esc(item)}</span>`).join('')}</div>` : (profile.allergiesReviewed ? '<span style="color:var(--success)">NKDA (No Known Drug Allergies)</span>' : '<span style="color:var(--danger)">⚠️ NOT REVIEWED</span>')}</div>
         <div class="summary-item" style="margin-top:8px"><strong>Conditions</strong>${profile.conditions.length ? `<div class="summary-list">${profile.conditions.map(item => `<span class="summary-chip">${esc(item)}</span>`).join('')}</div>` : 'None listed'}</div>
         ${lowSupply.length ? `<div class="summary-item" style="margin-top:8px"><strong>Low Supply</strong>${lowSupply.map(item => `${esc(item.med.name)} (${item.remaining} ${esc(getSupplyLabel(item.med))} left)`).join(', ')}</div>` : ''}
+        ${(() => { const oc = state.doses.filter(d => d.overrideType && d.actionType !== 'removed').length; return oc ? `<div class="summary-item" style="margin-top:8px"><strong>Safety Overrides</strong><span style="color:var(--warn-border)">${oc} dose${oc !== 1 ? 's' : ''} logged with override</span></div>` : ''; })()}
       </div>
     </div>
     <div class="card-warn" style="margin-top:10px;font-size:12px">⚠️ <strong>Single-device tracker.</strong> Data is stored only on this device. If multiple caregivers log doses, use one shared device to prevent double-dosing.</div>
@@ -1113,7 +1114,8 @@ function showAlertBanner(text, isOverdue, medId) {
   positionAlertBanner();
   textEl.textContent = text;
   banner.className = 'alert-banner ab-visible ' + (isOverdue ? 'ab-overdue' : 'ab-ready');
-  logBtn.textContent = isOverdue ? 'Open' : 'Open';
+  const med = getMed(medId);
+  logBtn.textContent = med ? `Open ${med.name}` : 'Open';
   logBtn.onclick = () => { dismissAlertBanner(); handleLog(medId); };
   clearTimeout(alertBannerTimeout);
   alertBannerTimeout = setTimeout(dismissAlertBanner, isOverdue ? 120000 : 30000);
@@ -1202,6 +1204,7 @@ function showModal(html){
 function closeModal(){
   document.getElementById('modal-overlay').classList.add('hidden');
   window._pendingModalAction = null;
+  _lastLogTap = 0; // Reset debounce so next handleLog isn't blocked
   if (_modalReturnFocus) { _modalReturnFocus.focus(); _modalReturnFocus = null; }
 }
 document.addEventListener('keydown', e => {
@@ -1587,8 +1590,12 @@ function downloadReminder(medId) {
   URL.revokeObjectURL(a.href);
 }
 
+let _lastLogTap = 0;
 function handleLog(medId) {
   try {
+    const tapNow = Date.now();
+    if (tapNow - _lastLogTap < 1500) return;
+    _lastLogTap = tapNow;
     const med=getMed(medId);
     if(!med){console.error('handleLog: unknown med',medId);return;}
     const info = getMedReadiness(med);
@@ -1648,8 +1655,12 @@ function showMultiTabModal(med) {
     </div>`);
 }
 
+function disableModalConfirmButtons() {
+  document.querySelectorAll('#modal .btn-confirm, #modal .btn-danger').forEach(b => b.disabled = true);
+}
 function confirmMultiTab() {
   try {
+    disableModalConfirmButtons();
     const doseTime = getDoseTime();
     const pairedMedIds = [...document.querySelectorAll('[data-paired-med]')].filter(cb => cb.checked).map(cb => cb.dataset.pairedMed);
     const loggedBy = CONFIG.profile?.defaultLoggerName || getModalLoggerName();
@@ -1690,7 +1701,7 @@ function showTrackedModal(med) {
   showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''}</h3>${buildIntervalWarning(info)}
     ${tabsHtml}
     ${exceedWarn}
-    <p style="font-size:13px;color:var(--muted)">24hr total so far: ${info.rollingTotal}mg / ${med.maxDaily}mg</p>
+    <p style="font-size:13px;color:var(--muted)">24hr total so far: ${info.rollingTotal}mg / ${med.maxDaily}mg <span style="font-size:11px">(only doses logged here)</span></p>
     ${renderTimeSelector()}
     ${renderLoggerField()}
     <div class="modal-actions" style="margin-top:12px">
@@ -1702,6 +1713,7 @@ function showTrackedModal(med) {
 
 function confirmSingleDose(medId, tabs, userOverrideReason) {
   try {
+    disableModalConfirmButtons();
     const med = getMed(medId);
     const doseTime = getDoseTime();
     const info = med ? getMedReadiness(med, doseTime) : null;
@@ -1720,6 +1732,7 @@ function confirmSingleDose(medId, tabs, userOverrideReason) {
 
 function confirmTracked() {
   try {
+    disableModalConfirmButtons();
     const med = getMed(window._modalMedId);
     const tabs = window._modalTabVal||1;
     if (!med) return closeModal();
@@ -2624,6 +2637,8 @@ function buildMedicationListText() {
   lines.push(`Emergency contact: ${profile.emergencyContact || 'NOT SET'}`);
   if (profile.surgeonName) lines.push(`Surgeon: ${profile.surgeonName}${profile.surgeonPhone ? ` — ${profile.surgeonPhone}` : ''}`);
   if (profile.importantInstructions) lines.push(`Instructions: ${profile.importantInstructions}`);
+  const overrideCount = state.doses.filter(d => d.overrideType && d.actionType !== 'removed').length;
+  if (overrideCount) lines.push(`Safety overrides: ${overrideCount} dose${overrideCount !== 1 ? 's' : ''} logged with override`);
   lines.push('');
   const appendMedGroup = (label, meds) => {
     if (!meds.length) return;
