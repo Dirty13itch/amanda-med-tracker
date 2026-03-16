@@ -959,7 +959,7 @@ function updateDocTitle() {
   try {
     const queue = getNextUpQueue();
     const overdueCount = queue.filter(q => q.isOverdue).length;
-    const nextReady = queue.find(q => q.isReady && !q.isOverdue);
+    const nextReady = queue.find(q => q.isReadyRecommended && !q.isOverdue);
     const bits = [];
     if (overdueCount) bits.push(overdueCount + ' overdue');
     if (nextReady) bits.push(nextReady.med.name + ' ready');
@@ -1157,7 +1157,7 @@ function renderWarnings() {
   container.innerHTML=html;
   // Hide warnings section if nothing to show
   const section=document.getElementById('warnings-section');
-  if(section) section.style.display=(WARNINGS.length||MEDS.some(m=>m.conflictsWith))?'':'none';
+  if(section) section.style.display=html.trim()?'':'none';
 }
 function renderLog() {
   const previewEl=document.getElementById('log-preview');
@@ -1373,7 +1373,7 @@ document.addEventListener('visibilitychange', () => {
         div.id = 'tz-change-banner';
         div.className = 'card-warn';
         div.style.cssText = 'margin:8px 12px;padding:10px;font-size:13px';
-        div.innerHTML = `⚠️ <strong>Timezone changed</strong> from ${esc(CONFIG.scheduleTimezone)} to ${esc(currentTz)}. Scheduled medication times may be shifted. <button onclick="CONFIG.scheduleTimezone='${currentTz}';save();this.parentElement.remove()" style="margin-left:8px;font-size:12px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--card);cursor:pointer">Update to ${esc(currentTz)}</button>`;
+        div.innerHTML = `⚠️ <strong>Timezone changed</strong> from ${esc(CONFIG.scheduleTimezone)} to ${esc(currentTz)}. Scheduled medication times may be shifted. <button onclick="CONFIG.scheduleTimezone='${esc(currentTz)}';save();this.parentElement.remove()" style="margin-left:8px;font-size:12px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--card);cursor:pointer">Update to ${esc(currentTz)}</button>`;
         document.body.querySelector('.header')?.after(div) || document.body.prepend(div);
       }
     }
@@ -1944,11 +1944,11 @@ function handleLog(medId) {
         return;
       }
     }
-    if(med.conflictsWith) return showConflictModal(med);
+    if(med.conflictsWith || info.conflictBlocked) return showConflictModal(med);
     if(med.trackTotal) return showTrackedModal(med);
     if(med.maxTabs>1||findPairedMeds(medId).length>0) return showMultiTabModal(med);
     showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''}</h3>
-      <p>${esc(med.dose)}</p>${buildIntervalWarning(info)}
+      <p>${esc(med.dose)}</p>${buildConflictWarning(info)}${buildIntervalWarning(info)}
       ${renderTimeSelector()}
       ${renderLoggerField()}
       ${renderSymptomField()}
@@ -1979,7 +1979,7 @@ function showMultiTabModal(med) {
   });
   window._modalMedId=med.id;
   window._modalTabVal=1;
-  showModal(`<h3>Log ${esc(med.name)}</h3>${buildIntervalWarning(info)}
+  showModal(`<h3>Log ${esc(med.name)}</h3>${buildConflictWarning(info)}${buildIntervalWarning(info)}
     ${tabsHtml}${pairedHtml}
     ${renderTimeSelector()}
     ${renderLoggerField()}
@@ -1999,7 +1999,7 @@ function confirmMultiTab() {
     disableModalConfirmButtons();
     const doseTime = getDoseTime();
     const pairedMedIds = [...document.querySelectorAll('[data-paired-med]')].filter(cb => cb.checked).map(cb => cb.dataset.pairedMed);
-    const loggedBy = CONFIG.profile?.defaultLoggerName || getModalLoggerName();
+    const loggedBy = getModalLoggerName();
     const symptomNote = getModalSymptomNote();
     const severity = getModalSeverity();
     const painScore = getModalPainScore();
@@ -2043,7 +2043,7 @@ function showTrackedModal(med) {
   });
   window._modalMedId=med.id;
   window._modalTabVal=defaultTabs;
-  showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''}</h3>${buildSameDayComboWarning(med)}${buildIntervalWarning(info)}
+  showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''}</h3>${buildConflictWarning(info)}${buildSameDayComboWarning(med)}${buildIntervalWarning(info)}
     ${tabsHtml}${pairedHtml}
     ${exceedWarn}
     <p style="font-size:13px;color:var(--muted)">24hr total so far: ${info.rollingTotal}mg / ${med.maxDaily}mg <span style="font-size:11px">(only doses logged here)</span></p>
@@ -2067,7 +2067,7 @@ function confirmSingleDose(medId, tabs, userOverrideReason) {
       ? `[USER] ${userOverrideReason} | [SYSTEM] ${info?.blockReason || ''}`
       : (info ? info.blockReason : '');
     const added = addDose(medId, tabs||1, doseTime, {
-      loggedBy: CONFIG.profile?.defaultLoggerName || getModalLoggerName(),
+      loggedBy: getModalLoggerName(),
       symptomNote: getModalSymptomNote(),
       severity: getModalSeverity(),
       painScore: getModalPainScore(),
@@ -2096,14 +2096,14 @@ function confirmTracked() {
         </div>`);
       return;
     }
-    const loggedBy = CONFIG.profile?.defaultLoggerName || getModalLoggerName();
+    const loggedBy = getModalLoggerName();
     const pairedMedIds = [...document.querySelectorAll('[data-paired-med]')].filter(cb => cb.checked).map(cb => cb.dataset.pairedMed);
     const added = addDose(window._modalMedId, tabs, doseTime, {
       loggedBy,
       symptomNote: getModalSymptomNote(),
       severity: getModalSeverity(),
       painScore: getModalPainScore(),
-      overrideType: info.intervalBlocked ? 'early' : '',
+      overrideType: info.conflictBlocked ? 'conflict' : info.intervalBlocked ? 'early' : '',
       overrideReason: info.blockReason,
       pairedMedIds
     });
