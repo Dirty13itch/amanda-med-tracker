@@ -328,7 +328,7 @@ function rolling24hTotal(medId, referenceDate = now(), options = {}) {
   const med = getMed(medId);
   let total = dosesForMed(medId, options)
     .filter(d => { const time = new Date(d.time); return time >= cutoff && time <= ref; })
-    .reduce((s,d)=>s+d.mg,0);
+    .reduce((s,d)=>s+(d.mg||0),0);
   // Cross-medication acetaminophen tracking: if this med is an APAP-tracked med,
   // also count APAP from combination meds (e.g., Hydrocodone/APAP contains 325mg APAP per tab)
   const isApapMed = med && med.trackTotal && (
@@ -343,7 +343,7 @@ function rolling24hTotal(medId, referenceDate = now(), options = {}) {
       if (other.apapPerTab && other.apapPerTab > 0) {
         total += dosesForMed(other.id, options)
           .filter(d => { const time = new Date(d.time); return time >= cutoff && time <= ref && (d.actionType || 'dose') === 'dose'; })
-          .reduce((s,d) => s + (d.tabs * other.apapPerTab), 0);
+          .reduce((s,d) => s + ((d.tabs || 0) * other.apapPerTab), 0);
       }
     });
   }
@@ -711,7 +711,8 @@ function showDuplicateDoseModal(medId, tabs, doseTime, options) {
     </div>`);
   let countdown = 5;
   const dupBtn = document.getElementById('dup-confirm-btn');
-  const dupTick = setInterval(() => {
+  if (window._dupCountdownInterval) clearInterval(window._dupCountdownInterval);
+  const dupTick = window._dupCountdownInterval = setInterval(() => {
     countdown--;
     if (!dupBtn) { clearInterval(dupTick); return; }
     dupBtn.textContent = countdown > 0 ? `Yes, This Is a Second Dose (${countdown}s)` : 'Yes, This Is a Second Dose';
@@ -1425,6 +1426,7 @@ function closeModal(){
   document.getElementById('modal-overlay').classList.add('hidden');
   window._pendingModalAction = null;
   _lastLogTap = 0; // Reset debounce so next handleLog isn't blocked
+  if (window._dupCountdownInterval) { clearInterval(window._dupCountdownInterval); window._dupCountdownInterval = null; }
   if (_modalReturnFocus) { _modalReturnFocus.focus(); _modalReturnFocus = null; }
 }
 document.addEventListener('keydown', e => {
@@ -2026,7 +2028,7 @@ function confirmMultiTab() {
       loggedBy, symptomNote, severity, painScore,
       pairedMedIds
     });
-    if (!primaryAdded) return;
+    if (!primaryAdded) { document.querySelectorAll('#modal .btn-confirm, #modal .btn-danger').forEach(b => b.disabled = false); return; }
     pairedMedIds.forEach(pairedMedId => addDose(pairedMedId,1,doseTime, { loggedBy }));
     closeModal();
   } catch(e) { console.error('confirmMultiTab error:',e); closeModal(); }
@@ -2094,6 +2096,7 @@ function confirmSingleDose(medId, tabs, userOverrideReason) {
       overrideReason
     });
     if (added) closeModal();
+    else document.querySelectorAll('#modal .btn-confirm, #modal .btn-danger').forEach(b => b.disabled = false);
   }
   catch(e) { console.error('confirmSingleDose error:',e); closeModal(); }
 }
@@ -2126,7 +2129,7 @@ function confirmTracked() {
       overrideReason: info.blockReason,
       pairedMedIds
     });
-    if (!added) return;
+    if (!added) { document.querySelectorAll('#modal .btn-confirm, #modal .btn-danger').forEach(b => b.disabled = false); return; }
     pairedMedIds.forEach(pairedMedId => addDose(pairedMedId, 1, doseTime, { loggedBy }));
     closeModal();
   }
