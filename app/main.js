@@ -1082,6 +1082,11 @@ let alertBannerTimeout = null;
 
 function playChime() {
   try {
+    // Bedside mode: vibrate only, skip audio to avoid startling at night
+    if (document.body.classList.contains('bedside')) {
+      if (navigator.vibrate) navigator.vibrate([150, 80, 150]);
+      return;
+    }
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const t = ctx.currentTime;
     // Gentle ascending two-tone chime.
@@ -1119,7 +1124,10 @@ function showAlertBanner(text, isOverdue, medId) {
   logBtn.textContent = med ? `Open ${med.name}` : 'Open';
   logBtn.onclick = () => { dismissAlertBanner(); handleLog(medId); };
   clearTimeout(alertBannerTimeout);
-  alertBannerTimeout = setTimeout(dismissAlertBanner, isOverdue ? 120000 : 30000);
+  // Bedside mode: don't auto-dismiss — banner stays until tapped (patient may be groggy)
+  if (!document.body.classList.contains('bedside')) {
+    alertBannerTimeout = setTimeout(dismissAlertBanner, isOverdue ? 120000 : 30000);
+  }
 }
 
 function dismissAlertBanner() {
@@ -1130,13 +1138,22 @@ function dismissAlertBanner() {
 
 function fireNotification(medName, isOverdue) {
   if ('Notification' in window && Notification.permission === 'granted') {
+    const title = isOverdue ? medName + ' — scheduled dose overdue' : medName + ' is now eligible';
+    const opts = {
+      body: 'Check tracker before taking — verify no conflicts or limits',
+      icon: '/icon.svg',
+      tag: 'med-reminder-' + medName,
+      renotify: true
+    };
     try {
-      new Notification(isOverdue ? medName + ' — scheduled dose overdue' : medName + ' is now eligible', {
-        body: 'Check tracker before taking — verify no conflicts or limits',
-        icon: '/icon.svg',
-        tag: 'med-reminder-' + medName,
-        renotify: true
-      });
+      // Prefer SW notification — works when page is backgrounded on Android
+      if (navigator.serviceWorker && navigator.serviceWorker.ready) {
+        navigator.serviceWorker.ready.then(reg => reg.showNotification(title, opts)).catch(() => {
+          new Notification(title, opts);
+        });
+      } else {
+        new Notification(title, opts);
+      }
     } catch(e) {}
   }
 }
@@ -1177,6 +1194,8 @@ document.addEventListener('visibilitychange', () => {
     _lastWallMs = Date.now();
     render();
     checkAlerts(true);
+    // Re-acquire wake lock if in bedside mode (Chrome releases on visibility loss)
+    if (document.body.classList.contains('bedside')) acquireWakeLock();
   } else {
     _lastMonotonicMs = performance.now();
     _lastWallMs = Date.now();
@@ -1915,12 +1934,29 @@ function renderRecoveryNote() {
 }
 
 // Bedside / Night Mode
+let _wakeLockSentinel = null;
+async function acquireWakeLock() {
+  if ('wakeLock' in navigator && document.body.classList.contains('bedside')) {
+    try {
+      _wakeLockSentinel = await navigator.wakeLock.request('screen');
+      _wakeLockSentinel.addEventListener('release', () => { _wakeLockSentinel = null; });
+    } catch(e) { /* battery saver may deny */ }
+  }
+}
+function releaseWakeLock() {
+  if (_wakeLockSentinel) { _wakeLockSentinel.release().catch(() => {}); _wakeLockSentinel = null; }
+}
 function toggleBedside() {
   const active = document.body.classList.toggle('bedside');
   const btn = document.getElementById('bedside-btn');
   btn.classList.toggle('active', active);
   btn.setAttribute('aria-checked', active);
   localStorage.setItem(BEDSIDE_KEY, active ? '1' : '0');
+  // Update browser chrome color
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', active ? '#000000' : '#2d3436');
+  // Wake Lock: keep screen on in bedside mode for alerts
+  if (active) { acquireWakeLock(); } else { releaseWakeLock(); }
 }
 function initBedside() {
   const saved = localStorage.getItem(BEDSIDE_KEY) || localStorage.getItem(LEGACY_BEDSIDE_KEY);
@@ -1930,6 +1966,9 @@ function initBedside() {
     document.body.classList.add('bedside');
     btn.classList.add('active');
     btn.setAttribute('aria-checked', 'true');
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', '#000000');
+    acquireWakeLock();
   }
 }
 // === Settings UI ===
