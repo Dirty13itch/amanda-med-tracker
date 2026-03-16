@@ -248,7 +248,9 @@ async function runScratchScenario(browser, baseUrl) {
     const initialBedside = (await bedsideToggle.getAttribute('aria-checked')) === 'true';
     await bedsideToggle.click();
     const toggledBedside = !initialBedside;
-    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.reload({ waitUntil: 'networkidle' });
+    // Wait for async initApp to complete (loads IDB, applies bedside class, renders cards)
+    await page.waitForSelector('.card[data-med-id]', { state: 'attached', timeout: 15000 });
     assert((await page.locator('body.bedside').count() === 1) === toggledBedside, 'Bedside mode should persist after reload');
     if (await page.locator('body.bedside').count() === 1) {
       await page.getByRole('switch', { name: 'Toggle bedside night mode' }).click();

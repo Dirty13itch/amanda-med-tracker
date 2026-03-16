@@ -824,7 +824,7 @@ function recordSkipEvent(medId, customTime, options) {
 
 function skipScheduledDose(medId) {
   const didSkip = recordSkipEvent(medId, getDoseTime(), {
-    loggedBy: CONFIG.profile?.defaultLoggerName || ''
+    loggedBy: getModalLoggerName()
   });
   if (didSkip) closeModal();
 }
@@ -1233,6 +1233,7 @@ function renderLog() {
 
 // === Alert & Reminder System ===
 let prevAvailability = {};
+let prevOverdue = {};
 let alertsInitialized = false;
 let alertBannerTimeout = null;
 let _lastChimeMs = 0;
@@ -1788,19 +1789,29 @@ function renderCards() {
 function checkAlerts(forceOverdueCheck) {
   const queue = getNextUpQueue();
   if (!alertsInitialized) {
-    queue.forEach(item => { prevAvailability[item.med.id] = item.shouldAlert; });
+    queue.forEach(item => {
+      prevAvailability[item.med.id] = item.shouldAlert;
+      prevOverdue[item.med.id] = item.isOverdue;
+    });
     alertsInitialized = true;
     if (forceOverdueCheck) {
       const overdue = queue.filter(q => q.isOverdue);
-      if (overdue.length > 0) showAlertBanner(overdue[0].med.name + ' is overdue - tap to log', true, overdue[0].med.id);
+      if (overdue.length > 0) {
+        showAlertBanner(overdue[0].med.name + ' is overdue - tap to log', true, overdue[0].med.id);
+        fireNotification(overdue[0].med.name, true);
+      }
     }
     return;
   }
   const newlyAvailable = [];
+  const newlyOverdue = [];
   queue.forEach(item => {
     const wasAvailable = prevAvailability[item.med.id] || false;
+    const wasOverdue = prevOverdue[item.med.id] || false;
     prevAvailability[item.med.id] = item.shouldAlert;
+    prevOverdue[item.med.id] = item.isOverdue;
     if (item.shouldAlert && !wasAvailable && item.med.scheduleType !== 'prn') newlyAvailable.push(item);
+    if (item.isOverdue && !wasOverdue) newlyOverdue.push(item);
   });
   if (newlyAvailable.length > 0) {
     const primary = newlyAvailable[0];
@@ -1809,9 +1820,17 @@ function checkAlerts(forceOverdueCheck) {
     if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
     fireNotification(primary.med.name, false);
   }
+  // Detect meds that just crossed the overdue threshold (30min past due)
+  if (newlyOverdue.length > 0 && newlyAvailable.length === 0) {
+    const primary = newlyOverdue[0];
+    showAlertBanner(primary.med.name + ' is overdue - tap to log', true, primary.med.id);
+    playChime();
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
+    fireNotification(primary.med.name, true);
+  }
   if (forceOverdueCheck) {
     const overdue = queue.filter(q => q.isOverdue);
-    if (overdue.length > 0 && newlyAvailable.length === 0) {
+    if (overdue.length > 0 && newlyAvailable.length === 0 && newlyOverdue.length === 0) {
       showAlertBanner(overdue[0].med.name + ' is overdue - tap to log', true, overdue[0].med.id);
       playChime();
       if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200]);
@@ -2986,7 +3005,7 @@ function buildHandoffSummaryText() {
   // Recent dose history (last 48 hours) — critical for ER visits
   const cutoff48h = new Date(now().getTime() - 48 * 3600000);
   const recentDoses = [...state.doses]
-    .filter(d => new Date(d.time) >= cutoff48h)
+    .filter(d => new Date(d.time) >= cutoff48h && (d.actionType || 'dose') !== 'removed')
     .sort((a, b) => new Date(b.time) - new Date(a.time));
   if (recentDoses.length) {
     lines.push('');
@@ -3147,7 +3166,7 @@ function openMedicationList() {
 function openDailyReview() {
   const todayKey = todayStr();
   const todaysEvents = [...state.doses]
-    .filter(entry => fmt(entry.time, 'date') === todayKey)
+    .filter(entry => fmt(entry.time, 'date') === todayKey && (entry.actionType || 'dose') !== 'removed')
     .sort((a, b) => new Date(b.time) - new Date(a.time));
   const overrides = todaysEvents.filter(entry => entry.overrideType && entry.overrideType !== 'skip');
   const skips = todaysEvents.filter(entry => (entry.actionType || 'dose') === 'skip');
@@ -3801,6 +3820,11 @@ async function initApp() {
   positionAlertBanner();
   if (_isFirstRun) showWelcome();
   render();
+  // Re-initialize alert state with fresh IDB data and check for overdue meds
+  alertsInitialized = false;
+  prevAvailability = {};
+  prevOverdue = {};
+  checkAlerts(true);
   // Auto-request persistent storage for PWA data safety
   if (storageHealth && !storageHealth.persisted) {
     storageManager.requestPersistence(storageMeta).then(meta => {
