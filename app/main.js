@@ -155,6 +155,7 @@ function loadConfig() {
 function saveConfig(cfg) {
   CONFIG = shared.normalizeConfig(cfg);
   refreshDerivedConfig();
+  try { localStorage.setItem(CONFIG_KEY, JSON.stringify(CONFIG)); } catch(e) { /* best effort */ }
   persistBundle('save-config');
 }
 
@@ -1182,6 +1183,16 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
+// Safety net: flush state to localStorage on tab close/hide (IDB write may be in-flight)
+window.addEventListener('pagehide', () => {
+  try {
+    if (state && state.doses && state.doses.length > 0) {
+      localStorage.setItem(DOSES_KEY, JSON.stringify(state));
+      localStorage.setItem(CONFIG_KEY, JSON.stringify(CONFIG));
+    }
+  } catch (e) { /* best effort */ }
+});
+
 // Start alert check loop (every 30 seconds)
 checkAlerts(false); // initialize state
 setInterval(() => checkAlerts(false), 30000);
@@ -1389,6 +1400,9 @@ function getNextUpQueue(referenceDate) {
     const timeDiff = a.minutesUntilEligible - b.minutesUntilEligible;
     if (Math.abs(timeDiff) > 0.5) return timeDiff;
     if (a.med.scheduled !== b.med.scheduled) return a.med.scheduled ? -1 : 1;
+    const aOpioid = a.med.category === 'opioid' ? 1 : 0;
+    const bOpioid = b.med.category === 'opioid' ? 1 : 0;
+    if (aOpioid !== bOpioid) return aOpioid - bOpioid;
     return displayMeds.indexOf(a.med) - displayMeds.indexOf(b.med);
   });
   return queue;
@@ -1517,7 +1531,7 @@ function checkAlerts(forceOverdueCheck) {
   queue.forEach(item => {
     const wasAvailable = prevAvailability[item.med.id] || false;
     prevAvailability[item.med.id] = item.shouldAlert;
-    if (item.shouldAlert && !wasAvailable) newlyAvailable.push(item);
+    if (item.shouldAlert && !wasAvailable && item.med.scheduleType !== 'prn') newlyAvailable.push(item);
   });
   if (newlyAvailable.length > 0) {
     const primary = newlyAvailable[0];
@@ -2538,6 +2552,10 @@ function buildHandoffSummaryText() {
   const lines = [];
   lines.push(`${CONFIG.patientName || 'Patient'} Medication Handoff`);
   lines.push(`Generated: ${fmt(now())} (${Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local'})`);
+  if (CONFIG.eventDate) {
+    const day = getRecoveryDay();
+    lines.push(`${CONFIG.eventLabel || 'Surgery'}: ${CONFIG.eventDate} (Post-op day ${day >= 0 ? day : 'pre-op'})`);
+  }
   if (profile.careLabel) lines.push(profile.careLabel);
   if (profile.dateOfBirth) lines.push(`DOB: ${profile.dateOfBirth} (age ${Math.floor((now() - new Date(profile.dateOfBirth)) / 31557600000)})`);
   if (profile.bloodType) lines.push(`Blood type: ${profile.bloodType}`);
@@ -2609,6 +2627,7 @@ function openHandoffSummary() {
     </div>`;
   }).join('');
   showModal(`<h3>${esc(CONFIG.patientName || 'Patient')} handoff summary</h3>
+    ${CONFIG.eventDate ? `<p><strong>${esc(CONFIG.eventLabel || 'Surgery')}:</strong> ${esc(CONFIG.eventDate)} (Post-op day ${getRecoveryDay() >= 0 ? getRecoveryDay() : 'pre-op'})</p>` : ''}
     <p>${esc(profile.careLabel || 'Care summary')}</p>
     ${profile.dateOfBirth ? `<p><strong>DOB:</strong> ${esc(profile.dateOfBirth)} (age ${Math.floor((now() - new Date(profile.dateOfBirth)) / 31557600000)}) ${profile.bloodType ? `&nbsp;|&nbsp;<strong>Blood:</strong> ${esc(profile.bloodType)}` : ''} ${profile.weight ? `&nbsp;|&nbsp;<strong>Wt:</strong> ${esc(profile.weight)}` : ''}</p>` : ''}
     ${profile.surgeonName ? `<p><strong>Surgeon:</strong> ${esc(profile.surgeonName)}${profile.surgeonPhone ? ` — ${esc(profile.surgeonPhone)}` : ''}</p>` : ''}
@@ -2629,6 +2648,10 @@ function buildMedicationListText() {
   const lines = [];
   lines.push(`${CONFIG.patientName || 'Patient'} Medication List`);
   lines.push(`Generated: ${fmt(now())} (${Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local'})`);
+  if (CONFIG.eventDate) {
+    const day = getRecoveryDay();
+    lines.push(`${CONFIG.eventLabel || 'Surgery'}: ${CONFIG.eventDate} (Post-op day ${day >= 0 ? day : 'pre-op'})`);
+  }
   if (profile.dateOfBirth) lines.push(`DOB: ${profile.dateOfBirth} (age ${Math.floor((now() - new Date(profile.dateOfBirth)) / 31557600000)})`);
   if (profile.bloodType) lines.push(`Blood type: ${profile.bloodType}`);
   if (profile.weight) lines.push(`Weight: ${profile.weight}`);

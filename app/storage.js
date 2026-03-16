@@ -18,7 +18,7 @@ function hasIndexedDb() {
   return typeof indexedDB !== 'undefined';
 }
 
-function openDatabase() {
+function openDatabase(cache) {
   if (!hasIndexedDb()) return Promise.resolve(null);
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -28,14 +28,22 @@ function openDatabase() {
         database.createObjectStore(STORE_NAME);
       }
     };
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      const db = request.result;
+      db.onversionchange = () => {
+        db.close();
+        if (cache) cache.promise = null;
+      };
+      resolve(db);
+    };
     request.onerror = () => reject(request.error || new Error('Failed to open IndexedDB'));
+    request.onblocked = () => reject(new Error('IndexedDB open blocked by another tab'));
   });
 }
 
 async function getDatabaseHandle(cache) {
   if (!cache.promise) {
-    cache.promise = openDatabase().catch(error => {
+    cache.promise = openDatabase(cache).catch(error => {
       cache.promise = null;
       throw error;
     });

@@ -116,7 +116,7 @@ const AMANDA_MEDS = [
     scheduleType: 'prn',
     scheduledTimes: [],
     isPrn: true,
-    instructions: 'Only log this when it was actually taken.',
+    instructions: 'Take WITH Oxycodone if experiencing nausea or itching. Only log when actually taken.',
     warns: ['Take together with Oxycodone'],
     category: 'antiemetic',
     pairedWith: 'oxycodone'
@@ -230,7 +230,12 @@ const AMANDA_WARNINGS = [
 const AMANDA_RECOVERY_NOTES = [
   { minDay: 14, maxDay: Infinity, noteType: 'rn-success', text: 'Day {day} — Ask your surgeon about NSAID restrictions before taking Ibuprofen or Aspirin.' },
   { minDay: 7, maxDay: 13, noteType: 'rn-info', text: 'Day {day} — Check with your doctor about the Cephalexin course and any medication changes.' },
-  { minDay: 3, maxDay: 6, noteType: 'rn-info', text: 'Day {day} — Keep up with scheduled Cephalexin doses. Discuss pain management options with your care team.' }
+  { minDay: 7, maxDay: Infinity, noteType: 'rn-warn', text: 'Day {day} — If still using Oxycodone, contact your surgeon. Extended opioid use beyond one week post-surgery warrants clinical review.' },
+  { minDay: 4, maxDay: 6, noteType: 'rn-info', text: 'Day {day} — Discuss pain management with your care team. Many patients transition to Tylenol-only by day 4-5.' },
+  { minDay: 3, maxDay: 6, noteType: 'rn-info', text: 'Day {day} — Keep up with scheduled Cephalexin doses. Discuss pain management options with your care team.' },
+  { minDay: 1, maxDay: 2, noteType: 'rn-warn', text: 'Day {day} — Peak swelling expected. Keep ahead of pain with scheduled meds. Report sudden increase in swelling, fever above 101.5°F, or uncontrolled bleeding to your surgeon.' },
+  { minDay: 0, maxDay: 0, noteType: 'rn-warn', text: 'Day {day} — Surgery day. Ice and elevate as directed. Monitor the surgical site for expanding swelling or new bleeding. Drowsiness from anesthesia is normal.' },
+  { minDay: 0, maxDay: 2, noteType: 'rn-info', text: 'Day {day} — Use Tylenol as your pain baseline. Oxycodone is for breakthrough pain that Tylenol alone doesn\'t control.' }
 ];
 
 function cleanArray(values) {
