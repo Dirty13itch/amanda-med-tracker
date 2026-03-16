@@ -317,7 +317,10 @@ function rolling24hTotal(medId, referenceDate = now(), options = {}) {
     .reduce((s,d)=>s+d.mg,0);
   // Cross-medication acetaminophen tracking: if this med tracks APAP totals,
   // also count APAP from combination meds (e.g., Hydrocodone/APAP contains 325mg APAP per tab)
-  if (med && med.trackTotal && med.category === 'analgesic' && med.name.toLowerCase().includes('acetaminophen') || (med && med.trackTotal && med.id === 'tylenol')) {
+  if (med && med.trackTotal && (
+    (med.category === 'analgesic' && med.name.toLowerCase().includes('acetaminophen')) ||
+    med.id === 'tylenol'
+  )) {
     MEDS.forEach(other => {
       if (other.id === medId || other.archived) return;
       if (other.apapPerTab && other.apapPerTab > 0) {
