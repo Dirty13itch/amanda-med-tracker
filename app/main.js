@@ -1202,7 +1202,7 @@ let _modalReturnFocus = null;
 function showModal(html){
   window._doseTimeOffset = 0; // Reset time selector for each new modal
   _modalReturnFocus = document.activeElement;
-  document.getElementById('modal').innerHTML='<div class="modal-handle"></div>'+html;
+  document.getElementById('modal').innerHTML='<div class="modal-handle" aria-hidden="true"></div>'+html;
   document.getElementById('modal-overlay').classList.remove('hidden');
   // Enable time selector and focus after modal animation settles (prevents phantom taps during slide-up)
   setTimeout(() => {
@@ -2051,7 +2051,7 @@ function renderDataSettingsSection() {
 
 function renderSettingsPanel() {
   const panel = document.getElementById('settings-panel');
-  panel.innerHTML = `<div class="settings-header"><h2>Settings</h2><button class="settings-close" onclick="closeSettings()">&times;</button></div>${renderPatientSettingsSection()}${renderMedicationSettingsSection()}${renderSafetySettingsSection()}${renderDataSettingsSection()}`;
+  panel.innerHTML = `<div class="settings-header"><h2>Settings</h2><button class="settings-close" onclick="closeSettings()" aria-label="Close settings">&times;</button></div>${renderPatientSettingsSection()}${renderMedicationSettingsSection()}${renderSafetySettingsSection()}${renderDataSettingsSection()}`;
 }
 
 function renderMedForm(med) {
@@ -2190,6 +2190,7 @@ function toggleMedArchived(index) {
   const med = MEDS[index];
   if (!med) return;
   med.archived = !med.archived;
+  if (med.archived) { med.archivedAt = now().toISOString(); } else { delete med.archivedAt; }
   CONFIG.meds = MEDS;
   saveConfig(CONFIG);
   showToast(`${med.name} ${med.archived ? 'archived' : 'restored'}`);
@@ -2420,7 +2421,7 @@ function deleteWarning(index) {
 // === Config Export/Import ===
 function showToast(msg, duration = 3500) {
   let toast = document.querySelector('.toast');
-  if(!toast) { toast = document.createElement('div'); toast.className='toast'; document.body.appendChild(toast); }
+  if(!toast) { toast = document.createElement('div'); toast.className='toast'; toast.setAttribute('role','status'); toast.setAttribute('aria-live','polite'); document.body.appendChild(toast); }
   toast.textContent = msg;
   toast.classList.add('show');
   clearTimeout(toast._tid);
@@ -2587,8 +2588,20 @@ function buildHandoffSummaryText() {
     if (med.scheduleType === 'scheduled' && med.scheduledTimes?.length) lines.push(`  Scheduled: ${med.scheduledTimes.map(format12h).join(', ')}`);
     if (info.last) lines.push(`  Last logged: ${fmt(info.last.time)}`);
     if (supply !== null) lines.push(`  Supply left: ${supply} ${getSupplyLabel(med)}`);
+    if (med.prescriber) lines.push(`  Prescriber: ${med.prescriber}`);
     if (med.instructions) lines.push(`  Instructions: ${med.instructions}`);
   });
+  // Archived medications — important for ER/provider context
+  const archivedMeds = CONFIG.meds.filter(m => m.archived);
+  if (archivedMeds.length) {
+    lines.push('');
+    lines.push('DISCONTINUED / ARCHIVED MEDICATIONS');
+    lines.push('-'.repeat(40));
+    archivedMeds.forEach(m => {
+      const archDate = m.archivedAt ? ` [stopped ${new Date(m.archivedAt).toLocaleDateString()}]` : '';
+      lines.push(`  ${m.name} — ${m.dose || 'no dose info'}${archDate}${m.prescriber ? ' (prescribed by ' + m.prescriber + ')' : ''}`);
+    });
+  }
   // Recent dose history (last 48 hours) — critical for ER visits
   const cutoff48h = new Date(now().getTime() - 48 * 3600000);
   const recentDoses = [...state.doses]
@@ -2794,7 +2807,7 @@ function exportConfig() {
       _mt:1,
       patientName: CONFIG.patientName || '',
       eventDate: CONFIG.eventDate || null,
-      profile: CONFIG.profile || shared.createEmptyProfile(),
+      profile: { careLabel: (CONFIG.profile || {}).careLabel || '', importantInstructions: (CONFIG.profile || {}).importantInstructions || '' },
       meds: CONFIG.meds,
       warnings: CONFIG.warnings,
       recoveryNotes: CONFIG.recoveryNotes,
