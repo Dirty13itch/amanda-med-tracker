@@ -1,4 +1,4 @@
-export const APP_VERSION = '2.2.1';
+export const APP_VERSION = '2.3.0';
 export const APP_SCHEMA = 2;
 export const BACKUP_SCHEMA = 1;
 export const CONFIG_KEY = 'medtracker-config-v1';
