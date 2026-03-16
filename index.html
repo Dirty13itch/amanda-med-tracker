@@ -42,7 +42,7 @@ main{max-width:800px;margin:0 auto;padding:12px}
 .warnings{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
 .alert{padding:10px 14px;border-radius:var(--radius);font-size:14px;line-height:1.4;border-left:4px solid}
 .alert-danger{background:var(--danger-bg);border-color:var(--danger-border);color:var(--danger-border)}
-.alert-warn{background:var(--warn-bg);border-color:var(--warn-border)}
+.alert-warn{background:var(--warn-bg);border-color:var(--warn-border);color:#8a6d3b}
 .alert strong{display:block;font-size:15px;margin-bottom:2px}
 .tracked-total-section{background:var(--card);border-radius:var(--radius);padding:14px 16px;margin-bottom:12px;box-shadow:var(--shadow)}
 .tracked-total-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
@@ -186,7 +186,7 @@ body.bedside{--bg:#000;--card:#0d0d0d;--text:#e8c9a0;--muted:#7a6248;--border:#1
   --danger-bg:#1a0a0a;--danger-border:#a04030;--warn-bg:#1a1408;--warn-border:#a08030;--success:#b08840}
 body.bedside header{background:#000;box-shadow:none;color:var(--text)}
 body.bedside .header-meta span:not(.clock){display:none}
-body.bedside .header-meta .clock{color:#e8c9a0}
+body.bedside .header-meta .clock{color:#e8c9a0;font-size:24px;letter-spacing:0.5px}
 body.bedside .warnings,body.bedside .tracked-total-section,body.bedside .med-cards,body.bedside .log-section,body.bedside .actions{display:none}
 body.bedside .next-up-card{padding:28px}
 body.bedside .nuc-name{font-size:28px}
@@ -335,7 +335,7 @@ body.bedside *:focus-visible{outline-color:#ffeaa7}
 .advanced-content{overflow:hidden;max-height:0;transition:max-height .3s ease;opacity:0}
 .advanced-content.open{max-height:800px;opacity:1;transition:max-height .3s ease,opacity .2s ease}
 /* Welcome / First-Run */
-.welcome-overlay{position:fixed;inset:0;background:var(--bg);z-index:400;display:flex;align-items:center;justify-content:center;padding:20px}
+.welcome-overlay{position:fixed;inset:0;background:var(--bg);z-index:450;display:flex;align-items:center;justify-content:center;padding:20px}
 .welcome-card{background:var(--card);border-radius:20px;box-shadow:0 8px 40px rgba(0,0,0,.15);padding:32px 28px;max-width:420px;width:100%;text-align:center}
 .welcome-card h2{font-size:24px;font-weight:700;margin-bottom:8px}
 .welcome-card p{font-size:15px;color:var(--muted);margin-bottom:20px;line-height:1.5}

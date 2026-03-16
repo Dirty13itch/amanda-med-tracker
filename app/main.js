@@ -468,6 +468,23 @@ function getMedReadiness(med, atDate, options = {}) {
   };
 }
 
+function format12h(timeStr) {
+  const [h, m] = timeStr.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+function renderLoggerField() {
+  if (CONFIG.profile?.defaultLoggerName) return '';
+  return '<div class="settings-field" style="margin-top:8px"><label>Who\'s logging this?</label><input type="text" id="modal-logger" placeholder="Your name" value=""></div>';
+}
+
+function getModalLoggerName() {
+  const el = document.getElementById('modal-logger');
+  return el ? el.value.trim() : '';
+}
+
 function getReadinessStatus(info) {
   if (info.maxDoseBlocked) {
     return { dot:'red', text:`${info.todayCount.length}/${info.med.maxDoses} doses today (complete)`, actionLabel:'Limit Reached', canOpenModal:false, canLogRecommended:false };
@@ -512,7 +529,7 @@ window._doseTimeOffset = 0; // 0=just now, >0=minutes ago, -1=custom time input
 function renderTimeSelector() {
   const n=now(), hh=String(n.getHours()).padStart(2,'0'), mm=String(n.getMinutes()).padStart(2,'0');
   return `<div class="time-selector">
-    <div class="ts-label">When was it taken?</div>
+    <div class="ts-label">When was it taken? <span style="float:right;color:var(--text);font-weight:700">Now: ${n.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})}</span></div>
     <div class="ts-chips">
       <button type="button" class="ts-chip active" onclick="selectTimeChip(this,0)">Just now</button>
       <button type="button" class="ts-chip" onclick="selectTimeChip(this,5)">5m ago</button>
@@ -551,8 +568,14 @@ function getDoseTime() {
   const input=document.getElementById('ts-custom-time');
   if(input&&input.value){
     const [h,m]=input.value.split(':').map(Number);
-    const d=new Date(); d.setHours(h,m,0,0);
-    if(d>now()) d.setDate(d.getDate()-1); // if time is ahead, assume yesterday
+    let d=new Date(); d.setHours(h,m,0,0);
+    if(d>now()) {
+      // If only slightly in the future (< 5 min, e.g. clock skew), clamp to now
+      // Otherwise assume yesterday (e.g. entering 11:55 PM when it's 12:05 AM)
+      const diffMs = d.getTime() - now().getTime();
+      if (diffMs < 5 * 60000) d = now();
+      else d.setDate(d.getDate() - 1);
+    }
     return d.toISOString();
   }
   return now().toISOString();
@@ -588,6 +611,7 @@ function confirmDuplicateDose() {
 
 function addDose(medId, tabs, customTime, options) {
   const opts = options || {};
+  let doseId = null;
   try {
     const med = getMed(medId);
     if (!med) { console.error('addDose: unknown med', medId); return false; }
@@ -612,6 +636,7 @@ function addDose(medId, tabs, customTime, options) {
       symptomNote: String(opts.symptomNote || '').trim(),
       scheduledFor: readiness.scheduledDueAt || ''
     };
+    doseId = dose.id;
     state.doses.push(dose);
     state.lastAction = { type: 'add-dose', doseId: dose.id };
     if (navigator.vibrate) navigator.vibrate(50);
@@ -624,7 +649,11 @@ function addDose(medId, tabs, customTime, options) {
     return true;
   } catch (e) {
     console.error('addDose error:', e);
-    try { save(); render(); } catch (e2) { console.error('addDose recovery failed:', e2); }
+    if (doseId !== null) {
+      state.doses = state.doses.filter(d => d.id !== doseId);
+    }
+    captureError(e, 'addDose');
+    try { render(); } catch (e2) { captureError(e2, 'addDose-render-recovery'); }
     return false;
   }
 }
@@ -747,7 +776,7 @@ function removeDose(id) {
     state.doses = state.doses.filter(d => d.id !== id);
     state.lastAction = removed ? { type: 'remove-dose', dose: removed } : null;
     save(); render();
-  } catch(e) { console.error('removeDose error:',e); try{save();render();}catch(e2){} }
+  } catch(e) { console.error('removeDose error:',e); captureError(e, 'removeDose'); try{save();render();}catch(e2){ captureError(e2, 'removeDose-recovery'); } }
 }
 // Rendering: each call is isolated so one failure doesn't break the whole refresh.
 function render() {
@@ -830,6 +859,7 @@ function renderCareSummary() {
         <button class="summary-action" onclick="openHandoffSummary()">Open handoff</button>
         <button class="summary-action" onclick="openMedicationList()">Medication list</button>
         <button class="summary-action" onclick="downloadFullBackup()">Backup</button>
+        ${activeMeds.length ? '<button class="summary-action" onclick="prepareForNewSurgery()" style="border-color:var(--warn-border)">New Surgery</button>' : ''}
       </div>
     </div>
     <div class="summary-grid">
@@ -855,6 +885,17 @@ function renderCareSummary() {
       <div class="storage-tile"><strong>Integrity Check</strong><span>${health.lastIntegrityCheckAt ? fmt(health.lastIntegrityCheckAt) : 'Not yet'}</span></div>
       <div class="storage-tile"><strong>Last Backup</strong><span>${health.lastSuccessfulBackupAt ? fmt(health.lastSuccessfulBackupAt) : 'Not yet'}</span></div>
     </div>
+    ${(() => {
+      if (!state.doses.length) return '';
+      const lastBackup = health.lastSuccessfulBackupAt ? new Date(health.lastSuccessfulBackupAt) : null;
+      const daysSince = lastBackup ? Math.floor((now() - lastBackup) / 86400000) : null;
+      if (!lastBackup || daysSince >= 7) {
+        return '<div class="card-warn" style="margin-top:10px">' +
+          (lastBackup ? `No backup in ${daysSince} days. ` : 'No backup yet. ') +
+          '<a href="#" onclick="downloadFullBackup();return false" style="color:inherit;text-decoration:underline">Back up now</a></div>';
+      }
+      return '';
+    })()}
   </section>`;
 }
 function renderWarnings() {
@@ -921,11 +962,31 @@ function renderLog() {
       <button class="log-remove" onclick="handleRemove(${d.id})" title="Remove this entry" aria-label="Remove ${esc(med?med.name:d.medId)} dose at ${fmt(d.time,'time')}">&times;</button>
     </div>`;
   };
-  // Show last 3 as preview (always visible)
-  const preview = sorted.slice(0, 3);
-  const rest = sorted.slice(3);
-  previewEl.innerHTML = preview.map(renderEntry).join('');
-  fullEl.innerHTML = rest.map(renderEntry).join('');
+  // Partition into current (active/unarchived meds) and archived entries
+  const archivedMedIds = new Set(CONFIG.meds.filter(m => m.archived).map(m => m.id));
+  const currentEntries = sorted.filter(d => !archivedMedIds.has(d.medId));
+  const archivedEntries = sorted.filter(d => archivedMedIds.has(d.medId));
+
+  // Show last 3 current entries as preview (always visible)
+  const preview = currentEntries.slice(0, 3);
+  const rest = currentEntries.slice(3);
+  previewEl.innerHTML = preview.length
+    ? preview.map(renderEntry).join('')
+    : (archivedEntries.length ? '<div class="log-empty">No new doses logged yet</div>' : '');
+
+  let archivedHtml = '';
+  if (archivedEntries.length) {
+    // Store entries for lazy rendering on toggle (avoids hidden DOM interfering with selectors)
+    window._archivedLogEntries = archivedEntries;
+    window._archivedLogRenderer = renderEntry;
+    archivedHtml = `<div class="log-archived-section">
+      <div class="log-archived-toggle" onclick="toggleArchivedLog()" style="cursor:pointer;padding:10px 0;border-top:1px solid var(--border);margin-top:8px;color:var(--muted);font-size:13px;">
+        <span id="archived-log-chevron">&#9654;</span> Previous entries (${archivedEntries.length})
+      </div>
+      <div id="archived-log-entries" style="display:none"></div>
+    </div>`;
+  }
+  fullEl.innerHTML = rest.map(renderEntry).join('') + archivedHtml;
 }
 
 // === Alert & Reminder System ===
@@ -1064,7 +1125,7 @@ function handleExport() {
   });
   let header=(CONFIG.patientName?CONFIG.patientName+' ':'')+'Medication Log';
   if(CONFIG.eventDate) header+='\n'+CONFIG.eventLabel+': '+CONFIG.eventDate;
-  header+='\nExported: '+now().toLocaleString();
+  header+='\nExported: '+now().toLocaleString()+' ('+Intl.DateTimeFormat().resolvedOptions().timeZone+')';
   const text=header+'\n\n'+lines.join('\n');
   const blob=new Blob([text],{type:'text/plain'});
   const a=document.createElement('a');
@@ -1089,6 +1150,89 @@ async function confirmClearAllData() {
   await persistBundle('clear-doses');
   render();
   closeModal();
+}
+
+// === New Surgery Flow ===
+function prepareForNewSurgery() {
+  const activeMeds = getDisplayMeds();
+  if (!activeMeds.length) {
+    showToast('No active medications to archive');
+    return;
+  }
+  showModal(`<h3>Prepare for New Surgery</h3>
+    <p>This will:</p>
+    <ul style="margin:0 0 12px 18px;font-size:14px;color:var(--muted);line-height:1.6">
+      <li>Download a full backup of your current data</li>
+      <li>Archive all ${activeMeds.length} current medications</li>
+      <li>Keep your dose history (collapsed in the log)</li>
+    </ul>
+    <p>You can then reactivate the meds you still need or add new ones.</p>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-danger" onclick="confirmNewSurgeryPrep()">Archive &amp; Continue</button>
+    </div>`);
+}
+
+async function confirmNewSurgeryPrep() {
+  closeModal();
+  // Step 1: Auto-backup
+  await downloadFullBackup();
+  // Step 2: Archive all active meds
+  CONFIG.meds.forEach(med => { med.archived = true; });
+  CONFIG.eventDate = null;
+  CONFIG.eventLabel = 'Surgery';
+  saveConfig(CONFIG);
+  render();
+  // Step 3: Show reactivation wizard
+  showNewSurgeryWizard();
+}
+
+function showNewSurgeryWizard() {
+  const allMeds = CONFIG.meds;
+  const checksHtml = allMeds.map((med, i) => {
+    const isLikelySame = ['opioid', 'analgesic', 'antiemetic', 'benzodiazepine', 'stool-softener'].includes(med.category);
+    return `<label class="modal-check">
+      <input type="checkbox" data-med-index="${i}" ${isLikelySame ? 'checked' : ''}>
+      <span>${esc(med.name)}${med.brand ? ' (' + esc(med.brand) + ')' : ''} &mdash; ${esc(med.dose)}</span>
+    </label>`;
+  }).join('');
+
+  const tomorrow = new Date(Date.now() + 86400000);
+  const tomorrowStr = fmt(tomorrow, 'date');
+
+  showModal(`<h3>Set Up New Recovery</h3>
+    <p style="font-size:14px;color:var(--muted);margin-bottom:14px">Your backup was downloaded. Select which medications to keep active for this surgery:</p>
+    <div style="max-height:240px;overflow-y:auto;margin-bottom:14px">${checksHtml}</div>
+    <div class="settings-field">
+      <label>Surgery Date</label>
+      <input type="date" id="new-surgery-date" value="${tomorrowStr}">
+    </div>
+    <div class="modal-actions" style="margin-top:14px">
+      <button class="btn-cancel" onclick="closeModal();openSettings()">Skip &mdash; I'll set up manually</button>
+      <button class="btn-confirm" onclick="applyNewSurgeryWizard()">Activate Selected</button>
+    </div>`);
+}
+
+function applyNewSurgeryWizard() {
+  // Reactivate checked meds
+  const checkboxes = document.querySelectorAll('#modal [data-med-index]');
+  checkboxes.forEach(cb => {
+    const idx = parseInt(cb.dataset.medIndex, 10);
+    if (Number.isFinite(idx) && CONFIG.meds[idx]) {
+      CONFIG.meds[idx].archived = !cb.checked;
+    }
+  });
+  // Set surgery date
+  const dateInput = document.getElementById('new-surgery-date');
+  if (dateInput && dateInput.value) {
+    CONFIG.eventDate = dateInput.value;
+  }
+  saveConfig(CONFIG);
+  initAppHeader();
+  render();
+  closeModal();
+  const activeCount = CONFIG.meds.filter(m => !m.archived).length;
+  showToast(`${activeCount} medication${activeCount !== 1 ? 's' : ''} activated`);
 }
 
 function formatIntervalLabel(minutes) {
@@ -1205,7 +1349,7 @@ function renderCards() {
     const status=getReadinessStatus(info);
     const warnsHtml=(med.warns||[]).map(w=>`<div class="card-warn">${esc(w)}</div>`).join('');
     const scheduleText = med.scheduleType === 'scheduled' && med.scheduledTimes && med.scheduledTimes.length
-      ? `Scheduled: ${med.scheduledTimes.join(', ')}`
+      ? `Scheduled: ${med.scheduledTimes.map(format12h).join(', ')}`
       : (med.reason || med.instructions || '');
     const supplyRemaining = shared.getCurrentSupply(med, state);
     const supplyPct = supplyRemaining === null || !med.supplyOnHand ? null : Math.max(0, Math.min(100, (supplyRemaining / med.supplyOnHand) * 100));
@@ -1299,19 +1443,20 @@ function downloadReminder(medId) {
   const end = new Date(nextTime.getTime() + 5 * 60000);
   const pad = n => String(n).padStart(2, '0');
   const icsDate = d => d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + 'T' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+  const icsEsc = s => String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,');
   const ics = [
     'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//MedTracker//EN',
     'BEGIN:VEVENT',
     'UID:' + Date.now() + '-' + medId + '@medtracker',
     'DTSTART:' + icsDate(nextTime),
     'DTEND:' + icsDate(end),
-    'SUMMARY:Take ' + med.name + (med.brand ? ' (' + med.brand + ')' : ''),
-    'DESCRIPTION:' + med.dose + ' - ' + med.freq,
+    'SUMMARY:Take ' + icsEsc(med.name) + (med.brand ? ' (' + icsEsc(med.brand) + ')' : ''),
+    'DESCRIPTION:' + icsEsc(med.dose) + ' - ' + icsEsc(med.freq),
     'BEGIN:VALARM','TRIGGER:-PT0M','ACTION:DISPLAY',
-    'DESCRIPTION:Time for ' + med.name,
+    'DESCRIPTION:Time for ' + icsEsc(med.name),
     'END:VALARM',
     'BEGIN:VALARM','TRIGGER:-PT5M','ACTION:DISPLAY',
-    'DESCRIPTION:' + med.name + ' in 5 minutes',
+    'DESCRIPTION:' + icsEsc(med.name) + ' in 5 minutes',
     'END:VALARM',
     'END:VEVENT','END:VCALENDAR'
   ].join('\r\n');
@@ -1345,6 +1490,7 @@ function handleLog(medId) {
     showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''}</h3>
       <p>${esc(med.dose)}</p>${buildIntervalWarning(info)}
       ${renderTimeSelector()}
+      ${renderLoggerField()}
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeModal()">Cancel</button>
         ${renderScheduledSkipButton(med, info)}
@@ -1375,6 +1521,7 @@ function showMultiTabModal(med) {
   showModal(`<h3>Log ${esc(med.name)}</h3>${buildIntervalWarning(info)}
     ${tabsHtml}${pairedHtml}
     ${renderTimeSelector()}
+    ${renderLoggerField()}
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
       ${renderScheduledSkipButton(med, info)}
@@ -1386,12 +1533,13 @@ function confirmMultiTab() {
   try {
     const doseTime = getDoseTime();
     const pairedMedIds = [...document.querySelectorAll('[data-paired-med]')].filter(cb => cb.checked).map(cb => cb.dataset.pairedMed);
+    const loggedBy = CONFIG.profile?.defaultLoggerName || getModalLoggerName();
     const primaryAdded = addDose(window._modalMedId, window._modalTabVal||1, doseTime, {
-      loggedBy: CONFIG.profile?.defaultLoggerName || '',
+      loggedBy,
       pairedMedIds
     });
     if (!primaryAdded) return;
-    pairedMedIds.forEach(pairedMedId => addDose(pairedMedId,1,doseTime, { loggedBy: CONFIG.profile?.defaultLoggerName || '' }));
+    pairedMedIds.forEach(pairedMedId => addDose(pairedMedId,1,doseTime, { loggedBy }));
     closeModal();
   } catch(e) { console.error('confirmMultiTab error:',e); closeModal(); }
 }
@@ -1425,6 +1573,7 @@ function showTrackedModal(med) {
     ${exceedWarn}
     <p style="font-size:13px;color:var(--muted)">24hr total so far: ${info.rollingTotal}mg / ${med.maxDaily}mg</p>
     ${renderTimeSelector()}
+    ${renderLoggerField()}
     <div class="modal-actions" style="margin-top:12px">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
       ${renderScheduledSkipButton(med, info)}
@@ -1438,7 +1587,7 @@ function confirmSingleDose(medId, tabs) {
     const doseTime = getDoseTime();
     const info = med ? getMedReadiness(med, doseTime) : null;
     const added = addDose(medId, tabs||1, doseTime, {
-      loggedBy: CONFIG.profile?.defaultLoggerName || '',
+      loggedBy: CONFIG.profile?.defaultLoggerName || getModalLoggerName(),
       overrideType: info && (info.conflictBlocked ? 'conflict' : info.intervalBlocked ? 'early' : ''),
       overrideReason: info ? info.blockReason : ''
     });
@@ -1464,7 +1613,7 @@ function confirmTracked() {
       return;
     }
     const added = addDose(window._modalMedId, tabs, doseTime, {
-      loggedBy: CONFIG.profile?.defaultLoggerName || '',
+      loggedBy: CONFIG.profile?.defaultLoggerName || getModalLoggerName(),
       overrideType: info.intervalBlocked ? 'early' : '',
       overrideReason: info.blockReason
     });
@@ -1480,6 +1629,7 @@ function showConflictModal(med) {
   showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''} ${esc(med.dose)}</h3>${buildConflictWarning(info)}${buildIntervalWarning(info)}
     <p>${esc(med.purpose)} &mdash; 1 tablet</p>
     ${renderTimeSelector()}
+    ${renderLoggerField()}
     <div class="modal-actions" style="margin-top:14px">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
       ${renderScheduledSkipButton(med, info)}
@@ -1508,6 +1658,19 @@ function toggleWarnings() {
   chevron.classList.toggle('open', !warningsCollapsed);
   if (btn) btn.setAttribute('aria-expanded', !warningsCollapsed);
 }
+function toggleArchivedLog() {
+  const entries = document.getElementById('archived-log-entries');
+  const chevron = document.getElementById('archived-log-chevron');
+  if (!entries) return;
+  const hidden = entries.style.display === 'none';
+  // Lazy render on first expand
+  if (hidden && !entries.children.length && window._archivedLogEntries && window._archivedLogRenderer) {
+    entries.innerHTML = window._archivedLogEntries.map(window._archivedLogRenderer).join('');
+  }
+  entries.style.display = hidden ? '' : 'none';
+  chevron.innerHTML = hidden ? '&#9660;' : '&#9654;';
+}
+
 function toggleLog() {
   logCollapsed = !logCollapsed;
   const full = document.getElementById('log-full');
@@ -1551,7 +1714,21 @@ function initWarningsState() {
 function renderRecoveryNote() {
   const el = document.getElementById('recovery-note');
   const day = getRecoveryDay();
-  if(day<0){el.innerHTML='';return;} // no event date configured
+  if(day<0){
+    // Show prompt only if no event date is configured at all (not for future dates)
+    if (!CONFIG.eventDate) {
+      const activeMeds = getDisplayMeds();
+      if (activeMeds.length > 0 && !sessionStorage.getItem('dismissed-date-prompt')) {
+        el.innerHTML = '<div class="recovery-note rn-info" style="display:flex;align-items:center;justify-content:space-between">' +
+          '<span>Set your surgery date in Settings to enable recovery day tracking</span>' +
+          '<button onclick="sessionStorage.setItem(\'dismissed-date-prompt\',\'1\');renderRecoveryNote()" style="background:none;border:none;color:inherit;font-size:18px;cursor:pointer;padding:0 4px" aria-label="Dismiss">&times;</button>' +
+          '</div>';
+        return;
+      }
+    }
+    el.innerHTML = '';
+    return;
+  }
   let html = '';
   for(const note of RECOVERY_NOTES){
     if(day>=note.minDay&&day<=note.maxDay){
@@ -2090,9 +2267,12 @@ function parseBackupInput(raw) {
   if (!input) throw new Error('Backup is empty');
   try {
     return shared.parseBackupEnvelope(input);
-  } catch (error) {
-    const decoded = atob(input);
-    return shared.parseBackupEnvelope(decoded);
+  } catch (jsonError) {
+    try {
+      return shared.parseBackupEnvelope(atob(input));
+    } catch (decodeError) {
+      throw new Error('Could not parse backup. Check the format and try again.');
+    }
   }
 }
 function previewBackupImport() {
@@ -2192,7 +2372,7 @@ function buildHandoffSummaryText() {
     const supply = shared.getCurrentSupply(med, state);
     lines.push(`${med.name}: ${status.text}`);
     lines.push(`  Dose: ${med.dose} | Frequency: ${med.freq}`);
-    if (med.scheduleType === 'scheduled' && med.scheduledTimes?.length) lines.push(`  Scheduled: ${med.scheduledTimes.join(', ')}`);
+    if (med.scheduleType === 'scheduled' && med.scheduledTimes?.length) lines.push(`  Scheduled: ${med.scheduledTimes.map(format12h).join(', ')}`);
     if (info.last) lines.push(`  Last logged: ${fmt(info.last.time)}`);
     if (supply !== null) lines.push(`  Supply left: ${supply} ${getSupplyLabel(med)}`);
     if (med.instructions) lines.push(`  Instructions: ${med.instructions}`);
@@ -2217,7 +2397,7 @@ function openHandoffSummary() {
       <h3>${esc(med.name)}</h3>
       <div class="summary-item"><strong>Status</strong>${esc(status.text)}</div>
       <div class="summary-item" style="margin-top:6px"><strong>Dose</strong>${esc(med.dose)} • ${esc(med.freq)}</div>
-      ${med.scheduleType === 'scheduled' && med.scheduledTimes?.length ? `<div class="summary-item" style="margin-top:6px"><strong>Scheduled</strong>${esc(med.scheduledTimes.join(', '))}</div>` : ''}
+      ${med.scheduleType === 'scheduled' && med.scheduledTimes?.length ? `<div class="summary-item" style="margin-top:6px"><strong>Scheduled</strong>${esc(med.scheduledTimes.map(format12h).join(', '))}</div>` : ''}
       ${info.last ? `<div class="summary-item" style="margin-top:6px"><strong>Last logged</strong>${esc(fmt(info.last.time))}</div>` : ''}
       ${supply !== null ? `<div class="summary-item" style="margin-top:6px"><strong>Supply left</strong>${supply} ${esc(getSupplyLabel(med))}</div>` : ''}
       ${med.instructions ? `<div class="summary-item" style="margin-top:6px"><strong>Instructions</strong>${esc(med.instructions)}</div>` : ''}
@@ -2257,7 +2437,7 @@ function buildMedicationListText() {
       lines.push(`- ${med.name}${med.brand ? ` (${med.brand})` : ''}: ${med.dose}`);
       lines.push(`  Purpose: ${med.purpose || med.reason || 'Not set'}`);
       lines.push(`  Frequency: ${med.freq || 'Not set'}`);
-      if (med.scheduleType === 'scheduled' && med.scheduledTimes?.length) lines.push(`  Scheduled: ${med.scheduledTimes.join(', ')}`);
+      if (med.scheduleType === 'scheduled' && med.scheduledTimes?.length) lines.push(`  Scheduled: ${med.scheduledTimes.map(format12h).join(', ')}`);
       if (info.last) lines.push(`  Last logged: ${fmt(info.last.time)}`);
       lines.push(`  Next status: ${lifecycleLabel || getReadinessStatus(info).text}`);
       if (med.instructions) lines.push(`  Instructions: ${med.instructions}`);
@@ -2294,7 +2474,7 @@ function openMedicationList() {
         <div style="margin-top:4px;color:var(--muted)">${esc(status)}</div>
         ${med.reason ? `<div style="margin-top:4px"><strong>Reason:</strong> ${esc(med.reason)}</div>` : ''}
         ${med.instructions ? `<div style="margin-top:4px"><strong>Instructions:</strong> ${esc(med.instructions)}</div>` : ''}
-        ${med.scheduleType === 'scheduled' && med.scheduledTimes?.length ? `<div style="margin-top:4px"><strong>Scheduled:</strong> ${esc(med.scheduledTimes.join(', '))}</div>` : ''}
+        ${med.scheduleType === 'scheduled' && med.scheduledTimes?.length ? `<div style="margin-top:4px"><strong>Scheduled:</strong> ${esc(med.scheduledTimes.map(format12h).join(', '))}</div>` : ''}
         ${(med.prescriber || med.pharmacy) ? `<div style="margin-top:4px"><strong>Care team:</strong> ${esc([med.prescriber, med.pharmacy].filter(Boolean).join(' • '))}</div>` : ''}
         ${supply !== null ? `<div style="margin-top:4px"><strong>Supply:</strong> ${supply} ${esc(getSupplyLabel(med))} left</div>` : ''}
       </div>`;
@@ -2557,6 +2737,13 @@ async function initApp() {
   positionAlertBanner();
   if (_isFirstRun) showWelcome();
   render();
+  // Auto-request persistent storage for PWA data safety
+  if (storageHealth && !storageHealth.persisted) {
+    storageManager.requestPersistence(storageMeta).then(meta => {
+      storageMeta = meta;
+      try { renderCareSummary(); } catch(e) {}
+    }).catch(() => {});
+  }
 }
 
 window.addEventListener('resize', positionAlertBanner);
@@ -2672,7 +2859,13 @@ Object.assign(window, {
   updateProfileField,
   updateProfileListField,
   undoLastDose,
-  welcomeNext
+  welcomeNext,
+  prepareForNewSurgery,
+  confirmNewSurgeryPrep,
+  showNewSurgeryWizard,
+  applyNewSurgeryWizard,
+  toggleArchivedLog,
+  renderRecoveryNote
 });
 
 

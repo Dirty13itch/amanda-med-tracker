@@ -1,4 +1,4 @@
-const CACHE_NAME = 'medtracker-v18';
+const CACHE_NAME = 'medtracker-v19';
 const ASSETS = [
   '/',
   '/index.html',
@@ -6,7 +6,9 @@ const ASSETS = [
   '/app/shared.js',
   '/app/storage.js',
   '/manifest.json',
-  '/icon.svg'
+  '/icon.svg',
+  '/icon-192.png',
+  '/icon-512.png'
 ];
 
 // Install: pre-cache the app shell for offline use.
@@ -69,7 +71,10 @@ self.addEventListener('fetch', event => {
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
         }
         return response;
-      }).catch(() => cached || caches.match('/'));
+      }).catch(() => {
+        if (cached) return cached;
+        return new Response('Offline', { status: 503 });
+      });
 
       // Return cached immediately if available, otherwise wait for network
       return cached || fetchPromise;

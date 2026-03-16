@@ -1,4 +1,4 @@
-export const APP_VERSION = '2.0.0';
+export const APP_VERSION = '2.1.0';
 export const APP_SCHEMA = 2;
 export const BACKUP_SCHEMA = 1;
 export const CONFIG_KEY = 'medtracker-config-v1';
@@ -245,8 +245,8 @@ export function createDefaultConfig(overrides = {}) {
 
 export function buildAmandaConfig() {
   return normalizeConfig({
-    patientName: 'Amanda',
-    eventDate: '2026-03-09',
+    patientName: '',
+    eventDate: null,
     eventLabel: 'Surgery',
     meds: deepClone(AMANDA_MEDS),
     warnings: deepClone(AMANDA_WARNINGS),
