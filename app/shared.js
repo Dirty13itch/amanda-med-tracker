@@ -559,7 +559,12 @@ export function buildBackupEnvelope({ config, state, meta }, sourceOrigin = (typ
 }
 
 export function parseBackupEnvelope(value) {
-  const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+  let parsed;
+  try {
+    parsed = typeof value === 'string' ? JSON.parse(value) : value;
+  } catch {
+    throw new Error('Invalid Med Tracker backup');
+  }
   if (!parsed || parsed.kind !== 'medtracker-backup-v1') {
     throw new Error('Invalid Med Tracker backup');
   }
@@ -624,9 +629,13 @@ export function encodeSetupPayload(value) {
 }
 
 export function decodeSetupPayload(raw) {
-  const binary = atob(String(raw || '').trim());
-  const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
-  return JSON.parse(new TextDecoder().decode(bytes));
+  try {
+    const binary = atob(String(raw || '').trim());
+    const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw new Error('Invalid setup code');
+  }
 }
 
 export function dosesForMed(state, medId) {
@@ -638,7 +647,9 @@ export function dosesForMed(state, medId) {
 export function getCurrentSupply(med, state) {
   const normalizedMed = normalizeMed(med);
   if (!normalizedMed.supplyOnHand) return null;
-  const used = dosesForMed(state, normalizedMed.id).reduce((total, dose) => total + dose.tabs, 0);
+  const used = dosesForMed(state, normalizedMed.id)
+    .filter(dose => (dose.actionType || 'dose') !== 'removed' && (dose.actionType || 'dose') !== 'skip')
+    .reduce((total, dose) => total + dose.tabs, 0);
   return Math.max(0, normalizedMed.supplyOnHand - used);
 }
 

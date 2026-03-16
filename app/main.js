@@ -1375,7 +1375,7 @@ document.addEventListener('visibilitychange', () => {
         div.className = 'card-warn';
         div.style.cssText = 'margin:8px 12px;padding:10px;font-size:13px';
         div.innerHTML = `⚠️ <strong>Timezone changed</strong> from ${esc(CONFIG.scheduleTimezone)} to ${esc(currentTz)}. Scheduled medication times may be shifted. <button onclick="CONFIG.scheduleTimezone='${esc(currentTz)}';save();this.parentElement.remove()" style="margin-left:8px;font-size:12px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--card);cursor:pointer">Update to ${esc(currentTz)}</button>`;
-        document.body.querySelector('.header')?.after(div) || document.body.prepend(div);
+        document.querySelector('header')?.after(div) || document.body.prepend(div);
       }
     }
     _lastMonotonicMs = performance.now();

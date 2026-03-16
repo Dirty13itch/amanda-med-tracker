@@ -239,7 +239,7 @@ run('validateBundle rejects null, missing config, and missing state', () => {
 run('parseBackupEnvelope rejects invalid kind field', () => {
   assert.throws(() => shared.parseBackupEnvelope(JSON.stringify({ kind: 'not-medtracker' })),
     /Invalid Med Tracker backup/);
-  assert.throws(() => shared.parseBackupEnvelope('not-json'), { name: 'SyntaxError' });
+  assert.throws(() => shared.parseBackupEnvelope('not-json'), /Invalid Med Tracker backup/);
 });
 
 run('Tylenol maxDaily and oxycodone maxDoses are correctly configured in Amanda template', () => {

@@ -21,12 +21,12 @@
 :root{
   --bg:#f5f6f8;--card:#fff;--text:#1a1a2e;--muted:#636e72;--border:#dfe6e9;
   --oxy:#e74c3c;--hyd:#e84393;--dia:#8e44ad;--ceph:#2980b9;--stool:#27ae60;--tyl:#e67e22;
-  --danger-bg:#fde8e8;--danger-border:#e74c3c;--warn-bg:#fff8e1;--warn-border:#f39c12;
+  --danger:#e74c3c;--danger-bg:#fde8e8;--danger-border:#e74c3c;--warn-bg:#fff8e1;--warn-border:#f39c12;
   --success:#00b894;--radius:12px;--shadow:0 2px 8px rgba(0,0,0,.08);
 }
 @media(prefers-color-scheme:dark){:root{
   --bg:#121220;--card:#1c1c30;--text:#e8e8e8;--muted:#9e9e9e;--border:#2a2a40;
-  --danger-bg:#3a1c1c;--danger-border:#c0392b;--warn-bg:#3a3018;--warn-border:#d4a017;
+  --danger:#c0392b;--danger-bg:#3a1c1c;--danger-border:#c0392b;--warn-bg:#3a3018;--warn-border:#d4a017;
   --shadow:0 2px 12px rgba(0,0,0,.35);
 }}
 html{font-size:100%}
@@ -245,7 +245,7 @@ body.bedside .config-share .btn-import{background:#1a1a1a;border:1px solid #2a2a
 .bedside-toggle:hover{color:#fff}
 .bedside-toggle.active{color:#ffeaa7}
 /* Alert Banner */
-.alert-banner{position:fixed;top:var(--alert-banner-top,96px);left:50%;width:min(560px,calc(100vw - 32px));padding:14px 20px;border-radius:14px;z-index:250;display:flex;align-items:center;gap:12px;transform:translate(-50%,-140%);transition:transform .35s cubic-bezier(.4,0,.2,1),opacity .2s ease;box-shadow:0 4px 20px rgba(0,0,0,.3);opacity:0;pointer-events:none}
+.alert-banner{position:fixed;top:var(--alert-banner-top,96px);left:50%;width:min(560px,calc(100vw - 32px));padding:14px 20px;border-radius:14px;z-index:350;display:flex;align-items:center;gap:12px;transform:translate(-50%,-140%);transition:transform .35s cubic-bezier(.4,0,.2,1),opacity .2s ease;box-shadow:0 4px 20px rgba(0,0,0,.3);opacity:0;pointer-events:none}
 .alert-banner.ab-visible{transform:translate(-50%,0);opacity:1;pointer-events:auto}
 .alert-banner.ab-ready{background:linear-gradient(135deg,#00b894,#00cec9)}
 .alert-banner.ab-overdue{background:linear-gradient(135deg,#e74c3c,#c0392b)}
@@ -451,10 +451,10 @@ body.bedside .next-up-card.nuc-overdue{animation:none}
   body{background:#fff}main{max-width:100%}
   .settings-overlay{display:none!important}
 }
-.symptom-chip{display:inline-block;padding:3px 10px;border-radius:14px;border:1px solid var(--border);background:var(--card-bg);font-size:0.82em;cursor:pointer;transition:all 0.15s}
+.symptom-chip{display:inline-flex;align-items:center;min-height:44px;padding:6px 12px;border-radius:14px;border:1px solid var(--border);background:var(--card);font-size:0.82em;cursor:pointer;transition:all 0.15s}
 .symptom-chip.active{background:var(--danger-bg,#fde8e8);border-color:var(--danger-border,#e74c3c);color:var(--danger-border,#e74c3c);font-weight:600}
 .pain-score-row{display:flex;gap:4px;margin:6px 0 2px}
-.pain-btn{flex:1;min-width:0;padding:8px 0;border:2px solid var(--border);border-radius:8px;background:var(--card);font-size:14px;font-weight:600;cursor:pointer;text-align:center;transition:all 0.15s;font-family:inherit;color:var(--text);-webkit-tap-highlight-color:transparent}
+.pain-btn{flex:1;min-width:0;min-height:44px;padding:8px 0;border:2px solid var(--border);border-radius:8px;background:var(--card);font-size:14px;font-weight:600;cursor:pointer;text-align:center;transition:all 0.15s;font-family:inherit;color:var(--text);-webkit-tap-highlight-color:transparent}
 .pain-btn:hover{border-color:hsl(var(--pain-hue,120) 60% 45%)}
 .pain-btn.active{background:hsl(var(--pain-hue,120) 60% 92%);border-color:hsl(var(--pain-hue,120) 60% 45%);color:hsl(var(--pain-hue,120) 60% 30%)}
 .pain-score-labels{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);padding:0 2px}

@@ -77,6 +77,7 @@ async function writeStoreValues(cache, entries) {
       reject(new Error('IDB write timed out after 5s'));
     }, 5000);
     tx.oncomplete = () => { clearTimeout(timeout); resolve(true); };
+    tx.onabort = () => { clearTimeout(timeout); reject(tx.error || new Error('IDB transaction aborted')); };
     tx.onerror = () => { clearTimeout(timeout); reject(tx.error || new Error('Failed to persist state')); };
   });
 }
@@ -284,7 +285,7 @@ export function createStorageManager({ onError } = {}) {
     }
 
     return {
-      backend: hasIndexedDb() ? 'indexeddb' : 'localStorage',
+      backend: meta.backend || (hasIndexedDb() ? 'indexeddb' : 'localStorage'),
       origin: location.origin,
       usage,
       quota,
