@@ -243,6 +243,15 @@ export function createStorageManager({ onError } = {}) {
     }, 'clear-doses');
   }
 
+  async function purgeSoftDeleted(config, currentState, meta) {
+    const kept = normalizeState(currentState).doses.filter(d => d.actionType !== 'removed');
+    return persistBundle({
+      config,
+      state: normalizeState({ ...currentState, doses: kept }),
+      meta: createDefaultMeta(meta || {})
+    }, 'purge-deleted');
+  }
+
   async function requestPersistence(meta = {}) {
     if (!navigator.storage || typeof navigator.storage.persist !== 'function') {
       return createDefaultMeta({ ...meta, persistentStorageGranted: false });
@@ -292,6 +301,7 @@ export function createStorageManager({ onError } = {}) {
     getHealth,
     loadBundle,
     persistBundle,
+    purgeSoftDeleted,
     recoverSnapshot,
     replaceFromBackup,
     requestPersistence

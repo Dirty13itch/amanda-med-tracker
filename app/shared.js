@@ -37,7 +37,9 @@ const DEFAULT_PROFILE = {
   dateOfBirth: '',
   weight: '',
   surgeonName: '',
-  surgeonPhone: ''
+  surgeonPhone: '',
+  quietStart: '',
+  quietEnd: ''
 };
 
 const DEFAULT_META = {
@@ -111,7 +113,7 @@ const AMANDA_MEDS = [
     maxTabs: 1,
     purpose: 'Anti-Nausea',
     reason: 'Nausea or itching',
-    freq: '1 tab every 4 hrs with Oxycodone',
+    freq: '1 tab every 4 hrs, ideally 30 min before Oxycodone',
     intervalMin: 240,
     color: 'var(--hyd)',
     bgBadge: '#fce4ec',
@@ -119,8 +121,8 @@ const AMANDA_MEDS = [
     scheduleType: 'prn',
     scheduledTimes: [],
     isPrn: true,
-    instructions: 'Take WITH Oxycodone if experiencing nausea or itching. Only log when actually taken.',
-    warns: ['Take together with Oxycodone', 'May add to drowsiness from opioids'],
+    instructions: 'Take 30 minutes BEFORE Oxycodone for best nausea prevention. Can also be taken at the same time if you forgot to pre-dose. Also helps with opioid-related itching.',
+    warns: ['Best taken 30 min before opioid dose for nausea prevention', 'May add to drowsiness from opioids — monitor for excessive sedation'],
     category: 'antiemetic',
     pairedWith: 'oxycodone',
     maxDoses: 4
@@ -212,8 +214,10 @@ const COMMON_MEDS = [
   { id: 'diazepam', name: 'Diazepam', brand: 'Valium', dose: '5mg', perTab: 5, maxTabs: 1, unitLabel: 'mg', purpose: 'Muscle Relaxer', reason: 'Muscle spasm or anxiety', freq: '1 tab every 6-8 hrs as needed', intervalMin: 360, category: 'benzodiazepine', warns: ['Do not combine with opioids without doctor approval — respiratory depression risk', 'May cause drowsiness'], instructions: 'Wait at least 2 hours after opioid doses.' },
   { id: 'cyclobenzaprine', name: 'Cyclobenzaprine', brand: 'Flexeril', dose: '10mg', perTab: 10, maxTabs: 1, unitLabel: 'mg', purpose: 'Muscle Relaxer', reason: 'Muscle spasm relief', freq: '1 tab every 8 hrs as needed', intervalMin: 480, category: 'muscle-relaxant', warns: ['May cause drowsiness', 'Avoid with alcohol'], instructions: '' },
   // Anti-nausea
-  { id: 'ondansetron', name: 'Ondansetron', brand: 'Zofran', dose: '4mg', perTab: 4, maxTabs: 1, unitLabel: 'mg', purpose: 'Anti-Nausea', reason: 'Nausea from anesthesia or opioids', freq: '1 tab every 6-8 hrs as needed', intervalMin: 360, category: 'antiemetic', warns: [], instructions: 'Dissolves on tongue — no water needed for ODT form.' },
-  { id: 'hydroxyzine', name: 'Hydroxyzine', brand: 'Vistaril', dose: '25mg', perTab: 25, maxTabs: 1, unitLabel: 'mg', purpose: 'Anti-Nausea / Itch', reason: 'Nausea, itching, or anxiety', freq: '1 tab every 4-6 hrs as needed', intervalMin: 240, category: 'antiemetic', warns: ['May cause drowsiness'], instructions: 'Can be taken with opioids for nausea prevention.' },
+  { id: 'ondansetron', name: 'Ondansetron', brand: 'Zofran', dose: '4mg', perTab: 4, maxTabs: 1, unitLabel: 'mg', purpose: 'Anti-Nausea', reason: 'Nausea from anesthesia or opioids', freq: '1 tab every 6-8 hrs as needed', intervalMin: 360, category: 'antiemetic', warns: ['Do not exceed 16mg in 24 hours'], instructions: 'Dissolves on tongue — no water needed for ODT form. Best taken 30 minutes before opioid dose if used preventively.', maxDaily: 16, trackTotal: true },
+  { id: 'hydroxyzine', name: 'Hydroxyzine', brand: 'Vistaril', dose: '25mg', perTab: 25, maxTabs: 1, unitLabel: 'mg', purpose: 'Anti-Nausea / Itch', reason: 'Nausea, itching, or anxiety', freq: '1 tab every 4-6 hrs as needed', intervalMin: 240, category: 'antiemetic', warns: ['May cause drowsiness', 'Adds to opioid sedation — monitor for excessive drowsiness'], instructions: 'Best taken 30 minutes before opioid dose for nausea prevention. Can also be used for itching.' },
+  { id: 'promethazine', name: 'Promethazine', brand: 'Phenergan', dose: '25mg', perTab: 25, maxTabs: 1, unitLabel: 'mg', purpose: 'Anti-Nausea', reason: 'Nausea or vomiting from opioids', freq: '1 tab every 4-6 hrs as needed', intervalMin: 360, category: 'antiemetic', warns: ['Causes significant drowsiness', 'Adds to opioid sedation — use lowest effective dose', 'Not recommended in elderly patients'], instructions: 'Take 30 minutes before opioid if used for prevention. Avoid if ondansetron is available and effective.' },
+  { id: 'metoclopramide', name: 'Metoclopramide', brand: 'Reglan', dose: '10mg', perTab: 10, maxTabs: 1, unitLabel: 'mg', purpose: 'Anti-Nausea', reason: 'Nausea with gastric slowing', freq: '1 tab 30 min before meals, up to 4x daily', intervalMin: 360, category: 'antiemetic', warns: ['Do not use for more than 12 weeks — risk of tardive dyskinesia', 'Do not exceed 40mg in 24 hours'], instructions: 'Useful when nausea involves feeling of fullness or bloating. Take 30 minutes before eating.', maxDoses: 4 },
   // Antibiotics
   { id: 'cephalexin', name: 'Cephalexin', brand: 'Keflex', dose: '500mg', perTab: 500, maxTabs: 1, unitLabel: 'mg', purpose: 'Antibiotic', reason: 'Infection prevention', freq: '1 tab four times daily', intervalMin: 360, category: 'antibiotic', scheduled: true, scheduleType: 'scheduled', scheduledTimes: ['08:00', '12:00', '17:00', '21:00'], maxDoses: 4, warns: ['Complete full course even if feeling better'], instructions: 'Take with or without food.' },
   { id: 'amoxicillin', name: 'Amoxicillin', brand: 'Amoxil', dose: '500mg', perTab: 500, maxTabs: 1, unitLabel: 'mg', purpose: 'Antibiotic', reason: 'Infection prevention', freq: '1 tab three times daily', intervalMin: 480, category: 'antibiotic', scheduled: true, scheduleType: 'scheduled', scheduledTimes: ['08:00', '14:00', '20:00'], maxDoses: 3, warns: ['Complete full course even if feeling better'], instructions: 'Take with or without food.' },
@@ -239,7 +243,8 @@ const AMANDA_RECOVERY_NOTES = [
   { minDay: 3, maxDay: 6, noteType: 'rn-info', text: 'Day {day} — Keep up with scheduled Cephalexin doses. Discuss pain management options with your care team.' },
   { minDay: 1, maxDay: 2, noteType: 'rn-warn', text: 'Day {day} — Peak swelling expected. Keep ahead of pain with scheduled meds. Report sudden increase in swelling, fever above 101.5°F, or uncontrolled bleeding to your surgeon.' },
   { minDay: 0, maxDay: 0, noteType: 'rn-warn', text: 'Day {day} — Surgery day. Ice and elevate as directed. Monitor the surgical site for expanding swelling or new bleeding. Drowsiness from anesthesia is normal.' },
-  { minDay: 0, maxDay: 2, noteType: 'rn-info', text: 'Day {day} — Use Tylenol as your pain baseline. Oxycodone is for breakthrough pain that Tylenol alone doesn\'t control.' }
+  { minDay: 0, maxDay: 2, noteType: 'rn-info', text: 'Day {day} — Use Tylenol as your pain baseline. Oxycodone is for breakthrough pain that Tylenol alone doesn\'t control.' },
+  { minDay: 0, maxDay: 3, noteType: 'rn-info', text: 'Day {day} — If taking opioids, take your anti-nausea medication (Hydroxyzine or Zofran) 30 minutes before the opioid dose for best nausea prevention.' }
 ];
 
 function cleanArray(values) {
@@ -479,7 +484,8 @@ export function normalizeConfig(config = {}) {
 }
 
 export function normalizeDose(dose = {}) {
-  const time = new Date(dose.time || Date.now());
+  const parsedTime = new Date(dose.time || Date.now());
+  const time = isNaN(parsedTime.getTime()) ? new Date() : parsedTime;
   const actionType = String(dose.actionType || 'dose').trim() || 'dose';
   const rawTabs = Number.isFinite(Number(dose.tabs)) ? Number(dose.tabs) : (actionType === 'skip' ? 0 : 1);
   const tabs = actionType === 'skip' ? 0 : Math.max(1, rawTabs);
@@ -496,7 +502,11 @@ export function normalizeDose(dose = {}) {
     overrideType: String(dose.overrideType || '').trim(),
     overrideReason: String(dose.overrideReason || '').trim(),
     symptomNote: String(dose.symptomNote || '').trim(),
-    scheduledFor: dose.scheduledFor ? new Date(dose.scheduledFor).toISOString() : ''
+    adverseFlag: Boolean(dose.adverseFlag),
+    severity: ['mild', 'moderate', 'severe'].includes(dose.severity) ? dose.severity : '',
+    painScore: (Number.isFinite(Number(dose.painScore)) && Number(dose.painScore) >= 0 && Number(dose.painScore) <= 10) ? Number(dose.painScore) : -1,
+    scheduledFor: dose.scheduledFor ? (isNaN(new Date(dose.scheduledFor).getTime()) ? '' : new Date(dose.scheduledFor).toISOString()) : '',
+    removedAt: dose.removedAt ? (isNaN(new Date(dose.removedAt).getTime()) ? '' : new Date(dose.removedAt).toISOString()) : ''
   };
 }
 

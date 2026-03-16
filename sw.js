@@ -1,4 +1,4 @@
-const CACHE_NAME = 'medtracker-v28';
+const CACHE_NAME = 'medtracker-v29';
 const ASSETS = [
   '/',
   '/index.html',
@@ -61,7 +61,7 @@ self.addEventListener('fetch', event => {
           }
           return response;
         })
-        .catch(() => caches.match(event.request).then(cached => cached || caches.match('/')))
+        .catch(() => caches.match(event.request, {ignoreSearch: true}).then(cached => cached || caches.match('/', {ignoreSearch: true})))
     );
     return;
   }

@@ -200,7 +200,14 @@ function loadState() {
 }
 
 function migrateState(value) {
-  return shared.normalizeState(value || {});
+  const raw = value || {};
+  if (raw.schema && raw.schema > CURRENT_SCHEMA) {
+    console.warn(`State schema ${raw.schema} is newer than app schema ${CURRENT_SCHEMA} — normalizing without downgrade`);
+    captureError(new Error(`Downgrade detected: state schema ${raw.schema} > app schema ${CURRENT_SCHEMA}`), 'migrate-state');
+  }
+  // Future migrations go here:
+  // if (raw.schema === 1) { raw = migrateV1toV2(raw); }
+  return shared.normalizeState(raw);
 }
 
 function validateState(value) {
@@ -530,13 +537,69 @@ function getModalLoggerName() {
   return override || (CONFIG.profile?.defaultLoggerName || '');
 }
 
-function renderSymptomField() {
-  return '<div class="settings-field" style="margin-top:8px"><label>Symptoms / side effects <span style="color:var(--muted);font-weight:400">(optional)</span></label><input type="text" id="modal-symptom" placeholder="e.g. nausea, drowsiness, itching" value=""></div>';
+function renderPainScoreField(selected) {
+  const val = typeof selected === 'number' && selected >= 0 ? selected : -1;
+  let btns = '';
+  for (let i = 0; i <= 10; i++) {
+    const active = i === val ? ' active' : '';
+    const hue = Math.round(120 - (i * 12));
+    btns += `<button type="button" class="pain-btn${active}" style="--pain-hue:${hue}" onclick="selectPainScore(${i})" aria-label="Pain ${i}">${i}</button>`;
+  }
+  return `<div class="settings-field" style="margin-top:10px">
+    <label>Pain level <span style="color:var(--muted);font-weight:400">(optional, 0-10)</span></label>
+    <div class="pain-score-row" id="pain-score-row">${btns}</div>
+    <div class="pain-score-labels"><span>None</span><span>Moderate</span><span>Worst</span></div>
+    <input type="hidden" id="modal-pain-score" value="${val}">
+  </div>`;
+}
+
+function selectPainScore(val) {
+  const row = document.getElementById('pain-score-row');
+  if (!row) return;
+  const hidden = document.getElementById('modal-pain-score');
+  const current = hidden ? parseInt(hidden.value, 10) : -1;
+  const next = current === val ? -1 : val;
+  row.querySelectorAll('.pain-btn').forEach((btn, i) => btn.classList.toggle('active', i === next));
+  if (hidden) hidden.value = next;
+}
+
+function getModalPainScore() {
+  const el = document.getElementById('modal-pain-score');
+  const val = el ? parseInt(el.value, 10) : -1;
+  return (Number.isFinite(val) && val >= 0 && val <= 10) ? val : -1;
+}
+
+function renderSymptomField(existingPain) {
+  const painHtml = renderPainScoreField(typeof existingPain === 'number' ? existingPain : -1);
+  const chips = ['Nausea','Drowsiness','Itching','Dizziness','Constipation','Headache','Rash','Breathing difficulty'];
+  const chipHtml = chips.map(c => `<button type="button" class="symptom-chip" onclick="toggleSymptomChip(this,'${c}')">${c}</button>`).join('');
+  return painHtml + `<div class="settings-field" style="margin-top:8px"><label>Symptoms / side effects <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px">${chipHtml}</div>
+    <input type="text" id="modal-symptom" placeholder="Additional details..." value="">
+    <div style="margin-top:6px"><label style="font-size:0.85em">Severity</label>
+    <select id="modal-severity" style="width:100%;padding:6px;border-radius:6px;border:1px solid var(--border)">
+      <option value="">None</option><option value="mild">Mild</option><option value="moderate">Moderate</option><option value="severe">Severe -- flag as adverse reaction</option>
+    </select></div></div>`;
 }
 
 function getModalSymptomNote() {
   const el = document.getElementById('modal-symptom');
   return el ? el.value.trim() : '';
+}
+
+function toggleSymptomChip(btn, label) {
+  btn.classList.toggle('active');
+  const input = document.getElementById('modal-symptom');
+  if (!input) return;
+  const parts = input.value.split(',').map(s => s.trim()).filter(Boolean);
+  const idx = parts.findIndex(p => p.toLowerCase() === label.toLowerCase());
+  if (idx >= 0) parts.splice(idx, 1); else parts.push(label);
+  input.value = parts.join(', ');
+}
+
+function getModalSeverity() {
+  const el = document.getElementById('modal-severity');
+  return el ? el.value : '';
 }
 
 function getReadinessStatus(info) {
@@ -696,6 +759,9 @@ function addDose(medId, tabs, customTime, options) {
       overrideType: String(opts.overrideType || (readiness.conflictBlocked ? 'conflict' : readiness.intervalBlocked ? 'early' : '')).trim(),
       overrideReason: String(opts.overrideReason || readiness.blockReason || '').trim(),
       symptomNote: String(opts.symptomNote || '').trim(),
+      adverseFlag: Boolean(opts.severity === 'severe' || opts.adverseFlag),
+      severity: ['mild', 'moderate', 'severe'].includes(opts.severity) ? opts.severity : '',
+      painScore: typeof opts.painScore === 'number' ? opts.painScore : -1,
       scheduledFor: readiness.scheduledDueAt || ''
     };
     doseId = dose.id;
@@ -741,6 +807,7 @@ function recordSkipEvent(medId, customTime, options) {
       overrideType: 'skip',
       overrideReason: 'scheduled-skip',
       symptomNote: String(opts.symptomNote || '').trim(),
+      painScore: typeof opts.painScore === 'number' ? opts.painScore : -1,
       scheduledFor: readiness.scheduledDueAt || eventTime
     };
     state.doses.push(skipEntry);
@@ -780,13 +847,42 @@ function handleEditDose(id) {
   showModal(`<h3>Edit ${esc(med.name)} entry</h3>
     <div class="settings-field"><label>Logged time</label><input type="datetime-local" id="edit-dose-time" value="${toDateTimeLocalValue(dose.time)}"></div>
     ${dose.actionType === 'skip' ? '<p>This is a skipped scheduled dose.</p>' : `<div class="settings-field"><label>Tabs</label><input type="number" id="edit-dose-tabs" min="1" max="${med.maxTabs || 4}" value="${tabsValue}"></div>`}
+    <div class="settings-field" style="margin-top:8px"><label>Pain level (0-10)</label>
+      <div class="pain-score-row" id="edit-pain-score-row"></div>
+      <input type="hidden" id="edit-dose-pain" value="${typeof dose.painScore === 'number' && dose.painScore >= 0 ? dose.painScore : -1}">
+    </div>
     <div class="settings-field"><label>Symptoms / side effects</label><input type="text" id="edit-dose-symptom" value="${esc(dose.symptomNote || '')}" placeholder="e.g. nausea, drowsiness, itching"></div>
+    <div class="settings-field"><label>Severity</label><select id="edit-dose-severity" style="width:100%;padding:6px;border-radius:6px;border:1px solid var(--border)"><option value="">None</option><option value="mild" ${dose.severity==='mild'?'selected':''}>Mild</option><option value="moderate" ${dose.severity==='moderate'?'selected':''}>Moderate</option><option value="severe" ${dose.severity==='severe'?'selected':''}>Severe -- adverse reaction</option></select></div>
     <div class="settings-field"><label>Note</label><textarea id="edit-dose-note" placeholder="Optional note">${esc(dose.note || '')}</textarea></div>
     <div class="settings-field"><label>Logged By</label><input type="text" id="edit-dose-logger" value="${esc(dose.loggedBy || '')}" placeholder="Who logged this?"></div>
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
       <button class="btn-confirm" onclick="saveEditedDose(${id})">Save Changes</button>
     </div>`);
+  const editPainVal = typeof dose.painScore === 'number' && dose.painScore >= 0 ? dose.painScore : -1;
+  initEditPainRow(editPainVal);
+}
+
+function initEditPainRow(currentVal) {
+  const row = document.getElementById('edit-pain-score-row');
+  if (!row) return;
+  let btns = '';
+  for (let i = 0; i <= 10; i++) {
+    const active = i === currentVal ? ' active' : '';
+    const hue = Math.round(120 - (i * 12));
+    btns += `<button type="button" class="pain-btn${active}" style="--pain-hue:${hue}" onclick="selectEditPainScore(${i})" aria-label="Pain ${i}">${i}</button>`;
+  }
+  row.innerHTML = btns;
+}
+
+function selectEditPainScore(val) {
+  const row = document.getElementById('edit-pain-score-row');
+  if (!row) return;
+  const hidden = document.getElementById('edit-dose-pain');
+  const current = hidden ? parseInt(hidden.value, 10) : -1;
+  const next = current === val ? -1 : val;
+  row.querySelectorAll('.pain-btn').forEach((btn, i) => btn.classList.toggle('active', i === next));
+  if (hidden) hidden.value = next;
 }
 
 function saveEditedDose(id) {
@@ -805,6 +901,14 @@ function saveEditedDose(id) {
   dose.mg = dose.actionType === 'skip' ? 0 : med.perTab * nextTabs;
   const symptomInput = document.getElementById('edit-dose-symptom');
   dose.symptomNote = symptomInput ? symptomInput.value.trim() : (dose.symptomNote || '');
+  const painInput = document.getElementById('edit-dose-pain');
+  if (painInput) {
+    const pv = parseInt(painInput.value, 10);
+    dose.painScore = (Number.isFinite(pv) && pv >= 0 && pv <= 10) ? pv : -1;
+  }
+  const sevInput = document.getElementById('edit-dose-severity');
+  dose.severity = sevInput ? sevInput.value : (dose.severity || '');
+  dose.adverseFlag = dose.severity === 'severe';
   dose.note = noteInput ? noteInput.value.trim() : dose.note;
   dose.loggedBy = loggerInput ? loggerInput.value.trim() : dose.loggedBy;
   dose.scheduledFor = med.scheduleType === 'scheduled' ? (readiness.scheduledDueAt || dose.scheduledFor || '') : '';
@@ -851,8 +955,20 @@ function removeDose(id) {
   } catch(e) { console.error('removeDose error:',e); captureError(e, 'removeDose'); try{save();render();}catch(e2){ captureError(e2, 'removeDose-recovery'); } }
 }
 // Rendering: each call is isolated so one failure doesn't break the whole refresh.
+function updateDocTitle() {
+  try {
+    const queue = getNextUpQueue();
+    const overdueCount = queue.filter(q => q.isOverdue).length;
+    const nextReady = queue.find(q => q.isReady && !q.isOverdue);
+    const bits = [];
+    if (overdueCount) bits.push(overdueCount + ' overdue');
+    if (nextReady) bits.push(nextReady.med.name + ' ready');
+    if (isQuietHours()) bits.push('quiet');
+    document.title = bits.length ? '(' + bits.join(' | ') + ') Med Tracker' : 'Med Tracker';
+  } catch(e) {}
+}
 function render() {
-  const parts = [renderClock,renderDayCounter,renderTrackedTotals,renderWarnings,renderRecoveryNote,renderCareSummary,renderNextUp,renderCards,renderLog];
+  const parts = [renderClock,renderDayCounter,renderTrackedTotals,renderWarnings,renderRecoveryNote,renderCareSummary,renderNextUp,renderCards,renderLog,updateDocTitle];
   for (const fn of parts) { try { fn(); } catch(e) { captureError(e, 'render:' + fn.name); } }
 }
 
@@ -903,6 +1019,22 @@ function renderCareSummary() {
     .map(med => ({ med, remaining: shared.getCurrentSupply(med, state) }))
     .filter(item => item.remaining !== null && item.remaining <= (item.med.refillThreshold || 0));
   const lastDoseEntry = [...state.doses].sort((a, b) => new Date(b.time) - new Date(a.time))[0] || null;
+
+  // Caregiver active-duration: how long the current logger has been on duty today
+  const currentLogger = CONFIG.profile?.defaultLoggerName || '';
+  let caregiverDurationHtml = '';
+  if (currentLogger && state.doses.length) {
+    const todayStart = new Date(now()); todayStart.setHours(0,0,0,0);
+    const loggerDoses = state.doses.filter(d => d.loggedBy === currentLogger && new Date(d.time) >= todayStart).sort((a,b) => new Date(a.time) - new Date(b.time));
+    if (loggerDoses.length) {
+      const firstLog = new Date(loggerDoses[0].time);
+      const hoursActive = Math.round((now() - firstLog) / 3600000 * 10) / 10;
+      const warnClass = hoursActive >= 12 ? 'color:var(--danger)' : hoursActive >= 8 ? 'color:var(--warn-border)' : '';
+      caregiverDurationHtml = ` • <span style="${warnClass}">${esc(currentLogger)} on duty ${hoursActive}h (${loggerDoses.length} logs)</span>`;
+      if (hoursActive >= 12) caregiverDurationHtml += ' <strong style="color:var(--danger)"> — consider a break</strong>';
+    }
+  }
+
   const health = storageHealth || {
     backend: storageMeta.backend || 'localStorage',
     bestEffort: true,
@@ -918,7 +1050,7 @@ function renderCareSummary() {
     <div class="care-summary-header">
       <div>
         <h2>${esc(profile.careLabel || 'Care Summary')}</h2>
-        <div class="care-summary-sub">${activeMeds.length} active medication${activeMeds.length !== 1 ? 's' : ''}${lastDoseEntry ? ` • Last dose ${fmt(lastDoseEntry.time)}` : ' • No doses logged yet'}</div>
+        <div class="care-summary-sub">${activeMeds.length} active medication${activeMeds.length !== 1 ? 's' : ''}${lastDoseEntry ? ` • Last dose ${fmt(lastDoseEntry.time)}` : ' • No doses logged yet'}${caregiverDurationHtml}</div>
       </div>
       <div class="care-summary-actions">
         <button class="summary-action" onclick="openHandoffSummary()">Open handoff</button>
@@ -1054,6 +1186,9 @@ function renderLog() {
     if (d.loggedBy) auditBits.push(`Logged by ${esc(d.loggedBy)}`);
     if (d.overrideType) auditBits.push(`Override: ${esc(d.overrideType)}`);
     if (d.overrideReason) auditBits.push(`Reason: ${esc(d.overrideReason)}`);
+    if (d.adverseFlag) auditBits.push('<span style="color:#e74c3c;font-weight:600">ADVERSE REACTION</span>');
+    if (d.severity) auditBits.push(`Severity: ${esc(d.severity)}`);
+    if (d.painScore >= 0) auditBits.push(`Pain: ${d.painScore}/10`);
     if (d.symptomNote) auditBits.push(`Symptom: ${esc(d.symptomNote)}`);
     if (d.note) auditBits.push(esc(d.note));
     const auditHtml = auditBits.length ? `<div class="card-note">${auditBits.join(' • ')}</div>` : '';
@@ -1102,8 +1237,22 @@ let alertsInitialized = false;
 let alertBannerTimeout = null;
 let _lastChimeMs = 0;
 
+function isQuietHours() {
+  const qs = CONFIG.profile?.quietStart;
+  const qe = CONFIG.profile?.quietEnd;
+  if (!qs || !qe) return false;
+  const n = now();
+  const hhmm = n.getHours() * 60 + n.getMinutes();
+  const [sh, sm] = qs.split(':').map(Number);
+  const [eh, em] = qe.split(':').map(Number);
+  const start = sh * 60 + sm;
+  const end = eh * 60 + em;
+  return start < end ? (hhmm >= start && hhmm < end) : (hhmm >= start || hhmm < end);
+}
+
 function playChime() {
   try {
+    if (isQuietHours()) return;
     // Rate-limit: at most one chime per 5 minutes to prevent alert fatigue
     const chimeNow = Date.now();
     if (chimeNow - _lastChimeMs < 300000) return;
@@ -1113,7 +1262,11 @@ function playChime() {
       if (navigator.vibrate) navigator.vibrate([150, 80, 150]);
       return;
     }
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    // Samsung Internet / iOS may start context in 'suspended' state
+    if (ctx.state === 'suspended') ctx.resume();
     const t = ctx.currentTime;
     // Gentle ascending two-tone chime.
     [523.25, 659.25].forEach((freq, i) => {
@@ -1130,6 +1283,8 @@ function playChime() {
       osc.start(start);
       osc.stop(start + 0.45);
     });
+    // Close context after tones finish to free resources and avoid hitting browser limits
+    setTimeout(() => ctx.close().catch(() => {}), 1500);
   } catch(e) {}
 }
 
@@ -1165,11 +1320,13 @@ function dismissAlertBanner() {
 }
 
 function fireNotification(medName, isOverdue) {
+  if (isQuietHours()) return;
   if ('Notification' in window && Notification.permission === 'granted') {
     const title = isOverdue ? medName + ' — scheduled dose overdue' : medName + ' is now eligible';
     const opts = {
       body: 'Check tracker before taking — verify no conflicts or limits',
-      icon: '/icon.svg',
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
       tag: 'med-reminder-' + medName,
       renotify: true
     };
@@ -1189,7 +1346,9 @@ function fireNotification(medName, isOverdue) {
 // Request notification permission on first interaction
 function maybeRequestNotifications() {
   if ('Notification' in window && Notification.permission === 'default') {
-    Notification.requestPermission();
+    // Safari <15.4 uses callback form; modern browsers return a Promise
+    const result = Notification.requestPermission(() => {});
+    if (result && result.catch) result.catch(() => {});
   }
 }
 
@@ -1306,8 +1465,10 @@ function handleExport() {
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
   a.download='med-log-'+todayStr()+'.txt';
+  a.style.display='none';
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(a.href);
+  setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},100);
 }
 function handleClear() {
   showModal(`<h3>Clear dose history?</h3>
@@ -1329,6 +1490,29 @@ async function confirmClearAllData() {
   closeModal();
   showToast('Dose history cleared');
 }
+function handlePurgeSoftDeleted() {
+  const removedCount = state.doses.filter(d => d.actionType === 'removed').length;
+  if (removedCount === 0) {
+    showToast('No deleted records to purge');
+    return;
+  }
+  showModal(`<h3>Purge ${removedCount} deleted record${removedCount !== 1 ? 's' : ''}?</h3>
+    <p>This will permanently erase all dose records previously marked as removed. This cannot be undone.</p>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-danger" onclick="confirmPurgeSoftDeleted()">Purge Permanently</button>
+    </div>`);
+}
+async function confirmPurgeSoftDeleted() {
+  const before = state.doses.length;
+  const saved = await storageManager.purgeSoftDeleted(CONFIG, state, storageMeta);
+  applyBundle(saved);
+  closeModal();
+  render();
+  renderSettingsPanel();
+  showToast(`${before - state.doses.length} deleted record(s) permanently erased`);
+}
+
 
 function handleFactoryReset() {
   showModal(`<h3>Delete all data?</h3>
@@ -1349,6 +1533,7 @@ async function confirmFactoryReset() {
     // Delete the IndexedDB database entirely
     if (window.indexedDB) {
       try { indexedDB.deleteDatabase('medtracker'); } catch(e) {}
+      try { indexedDB.deleteDatabase('medtracker-app-state-v2'); } catch(e) {}
     }
     // Unregister service worker
     if (navigator.serviceWorker) {
@@ -1684,8 +1869,10 @@ function downloadReminder(medId) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = 'reminder-' + med.name.toLowerCase().replace(/\s+/g, '-') + '.ics';
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(a.href);
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 100);
 }
 
 let _lastLogTap = 0;
@@ -1732,6 +1919,27 @@ function handleLog(medId) {
           <div class="modal-actions">
             <button class="btn-cancel" onclick="closeModal()">Go Back</button>
             <button class="btn-confirm" onclick="closeModal();handleLog('${medId}')">I Need ${esc(med.name)}</button>
+          </div>`);
+        return;
+      }
+    }
+    // Antiemetic pre-dose suggestion: if logging an opioid, check if there's an antiemetic
+    // that should be taken first (30 min before) and hasn't been taken recently
+    if (med.category === 'opioid' && !window._antiemeticPreDoseShown) {
+      const antiemeticMeds = MEDS.filter(m => !m.archived && m.category === 'antiemetic' && (m.pairedWith === med.id || m.pairedWith === ''));
+      const recentAntiemetic = antiemeticMeds.some(am => {
+        const amLast = lastDose(am.id, now());
+        return amLast && getDoseAgeMinutes(amLast, now()) < (am.intervalMin || 240);
+      });
+      if (antiemeticMeds.length > 0 && !recentAntiemetic) {
+        window._antiemeticPreDoseShown = true;
+        const aeNames = antiemeticMeds.map(m => m.name).join(' or ');
+        showModal(`<h3>Take anti-nausea medication first?</h3>
+          <p>Antiemetics like <strong>${esc(aeNames)}</strong> work best when taken <strong>30 minutes before</strong> an opioid dose.</p>
+          <p>If you're prone to nausea from ${esc(med.name)}, consider logging your antiemetic now and waiting 30 minutes before taking ${esc(med.name)}.</p>
+          <div class="modal-actions">
+            <button class="btn-cancel" onclick="closeModal();handleLog('${antiemeticMeds[0].id}')">Log ${esc(antiemeticMeds[0].name)} First</button>
+            <button class="btn-confirm" onclick="closeModal();window._antiemeticPreDoseShown=true;handleLog('${medId}')">Skip — Log ${esc(med.name)} Now</button>
           </div>`);
         return;
       }
@@ -1793,8 +2001,10 @@ function confirmMultiTab() {
     const pairedMedIds = [...document.querySelectorAll('[data-paired-med]')].filter(cb => cb.checked).map(cb => cb.dataset.pairedMed);
     const loggedBy = CONFIG.profile?.defaultLoggerName || getModalLoggerName();
     const symptomNote = getModalSymptomNote();
+    const severity = getModalSeverity();
+    const painScore = getModalPainScore();
     const primaryAdded = addDose(window._modalMedId, window._modalTabVal||1, doseTime, {
-      loggedBy, symptomNote,
+      loggedBy, symptomNote, severity, painScore,
       pairedMedIds
     });
     if (!primaryAdded) return;
@@ -1859,6 +2069,8 @@ function confirmSingleDose(medId, tabs, userOverrideReason) {
     const added = addDose(medId, tabs||1, doseTime, {
       loggedBy: CONFIG.profile?.defaultLoggerName || getModalLoggerName(),
       symptomNote: getModalSymptomNote(),
+      severity: getModalSeverity(),
+      painScore: getModalPainScore(),
       overrideType: info && (info.conflictBlocked ? 'conflict' : info.intervalBlocked ? 'early' : ''),
       overrideReason
     });
@@ -1889,6 +2101,8 @@ function confirmTracked() {
     const added = addDose(window._modalMedId, tabs, doseTime, {
       loggedBy,
       symptomNote: getModalSymptomNote(),
+      severity: getModalSeverity(),
+      painScore: getModalPainScore(),
       overrideType: info.intervalBlocked ? 'early' : '',
       overrideReason: info.blockReason,
       pairedMedIds
@@ -2122,6 +2336,10 @@ function renderPatientSettingsSection() {
     </div>
     <div class="settings-field" style="margin-bottom:4px"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" ${profile.allergiesReviewed?'checked':''} onchange="updateProfileField('allergiesReviewed',this.checked)"> I have reviewed allergies (${profile.allergies?.length ? profile.allergies.length + ' listed' : 'none'})</label><div class="hint">Check this even if patient has no known allergies, so handoff shows "NKDA" instead of "NOT REVIEWED".</div></div>
     <div class="settings-field"><label>Important Instructions</label><textarea placeholder="What should every caregiver know?" onchange="updateProfileField('importantInstructions',this.value)">${esc(profile.importantInstructions)}</textarea></div>
+    <div class="med-form-row">
+      <div class="settings-field"><label>Quiet Hours Start</label><input type="time" value="${profile.quietStart||''}" onchange="updateProfileField('quietStart',this.value)"><div class="hint">Suppress chimes and notifications during these hours.</div></div>
+      <div class="settings-field"><label>Quiet Hours End</label><input type="time" value="${profile.quietEnd||''}" onchange="updateProfileField('quietEnd',this.value)"></div>
+    </div>
   </div>`;
 }
 
@@ -2186,6 +2404,8 @@ function renderDataSettingsSection() {
     </div>
     <div class="config-share">
       <button class="btn-import" onclick="downloadFullBackup()">Download Backup</button>
+      <button class="btn-import" style="width:100%;font-size:13px;margin-bottom:8px" onclick="handlePurgeSoftDeleted()">Permanently Purge Deleted Records</button>
+      <p style="font-size:11px;color:var(--muted);margin-top:0;margin-bottom:12px">Hard-deletes dose records previously marked as removed. Cannot be undone.</p>
       <button class="btn-import" onclick="showBackupImportField()">Restore Backup</button>
     </div>
     <div class="config-share">
@@ -2232,13 +2452,13 @@ function renderMedForm(med) {
       <div class="settings-field"><label>Purpose</label><input type="text" id="mf-purpose" value="${esc(m.purpose)}" placeholder="e.g. Pain Relief"></div>
     </div>
     <div class="settings-field"><label>Frequency Description</label><input type="text" id="mf-freq" value="${esc(m.freq)}" placeholder="e.g. 1-2 tabs every 4 hours"></div>
-    <div class="med-form-row">
-      <div class="settings-field"><label>Reason</label><input type="text" id="mf-reason" value="${esc(m.reason||'')}" placeholder="Why is it taken?"></div>
-      <div class="settings-field"><label>Instructions</label><input type="text" id="mf-instructions" value="${esc(m.instructions||'')}" placeholder="Helpful note for caregiver"></div>
-    </div>
     <div class="settings-field"><label>Color</label><div class="color-swatches">${colorOptions.map(c=>`<div class="color-swatch${resolveColor(m.color)===c?' active':''}" style="background:${c}" onclick="selectMedColor(this,'${c}')"></div>`).join('')}</div></div>
     <button class="advanced-toggle" onclick="toggleAdvanced()"><span class="chevron" id="adv-chevron">&#9654;</span> Advanced Options</button>
     <div class="advanced-content" id="adv-content">
+      <div class="med-form-row">
+        <div class="settings-field"><label>Reason</label><input type="text" id="mf-reason" value="${esc(m.reason||'')}" placeholder="Why is it taken?"></div>
+        <div class="settings-field"><label>Instructions</label><input type="text" id="mf-instructions" value="${esc(m.instructions||'')}" placeholder="Helpful note for caregiver"></div>
+      </div>
       <div class="med-form-row">
         <div class="settings-field"><label>Schedule Type</label><select id="mf-scheduled"><option value="0"${!m.scheduled?' selected':''}>PRN / As Needed</option><option value="1"${m.scheduled?' selected':''}>Scheduled</option></select></div>
         <div class="settings-field"><label>Max Daily Doses</label><input type="number" id="mf-maxDoses" value="${m.maxDoses||0}" min="0" placeholder="0 = unlimited"></div>
@@ -2300,16 +2520,16 @@ function selectMedColor(el, color) {
   el.classList.add('active');
   _selectedMedColor = color;
 }
-function toggleCustomInterval() {
-  const sel = document.getElementById('mf-interval');
-  const inp = document.getElementById('mf-customInterval');
-  if(sel && inp) { inp.style.display = sel.value==='custom' ? '' : 'none'; }
-}
 function toggleAdvanced() {
   const content = document.getElementById('adv-content');
   const chevron = document.getElementById('adv-chevron');
   content.classList.toggle('open');
   if(chevron) chevron.style.transform = content.classList.contains('open') ? 'rotate(90deg)' : '';
+}
+function toggleCustomInterval() {
+  const sel = document.getElementById('mf-interval');
+  const inp = document.getElementById('mf-customInterval');
+  if(sel && inp) { inp.style.display = sel.value==='custom' ? '' : 'none'; }
 }
 function startAddMed() { _editingMedIndex = -3; _quickAddSource = 'settings'; _quickAddSearch = ''; _quickAddSelected = null; renderSettingsPanel(); }
 function editMed(i) { _editingMedIndex = i; _selectedMedColor = resolveColor(MEDS[i].color); renderSettingsPanel(); }
@@ -2318,8 +2538,11 @@ function quickEditMed(medId) {
   if (i === -1) return;
   openSettings();
   editMed(i);
-  // Scroll to the form after a tick so the DOM has rendered
+  // Auto-expand advanced section when editing, then scroll to form
   setTimeout(() => {
+    const adv = document.getElementById('adv-content');
+    const chevron = document.getElementById('adv-chevron');
+    if (adv && !adv.classList.contains('open')) { adv.classList.add('open'); if(chevron) chevron.style.transform='rotate(90deg)'; }
     const form = document.querySelector('.med-form');
     if (form) form.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, 100);
@@ -2588,8 +2811,10 @@ function downloadJsonFile(filename, payload) {
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
   link.download = filename;
+  link.style.display = 'none';
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(link.href);
+  setTimeout(() => { URL.revokeObjectURL(link.href); link.remove(); }, 100);
 }
 async function downloadFullBackup() {
   const envelope = shared.buildBackupEnvelope({ config: CONFIG, state, meta: storageMeta });
@@ -2774,6 +2999,9 @@ function buildHandoffSummaryText() {
       const override = d.overrideType ? ` [OVERRIDE: ${d.overrideType}]` : '';
       const logger = d.loggedBy ? ` by ${d.loggedBy}` : '';
       lines.push(`  ${fmt(d.time)} — ${name}: ${action}${override}${logger}`);
+      if (d.adverseFlag) lines.push('    *** ADVERSE REACTION FLAGGED ***');
+      if (d.severity) lines.push(`    Severity: ${d.severity}`);
+      if (d.painScore >= 0) lines.push(`    Pain: ${d.painScore}/10`);
       if (d.symptomNote) lines.push(`    Symptom: ${d.symptomNote}`);
       if (d.note) lines.push(`    Note: ${d.note}`);
     });
@@ -2789,8 +3017,10 @@ function downloadHandoffSummary() {
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
   link.download = `medtracker-handoff-${todayStr()}.txt`;
+  link.style.display = 'none';
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(link.href);
+  setTimeout(() => { URL.revokeObjectURL(link.href); link.remove(); }, 100);
 }
 function openHandoffSummary() {
   const profile = CONFIG.profile || shared.createEmptyProfile();
@@ -2877,8 +3107,10 @@ function downloadMedicationList() {
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
   link.download = `medtracker-medication-list-${todayStr()}.txt`;
+  link.style.display = 'none';
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(link.href);
+  setTimeout(() => { URL.revokeObjectURL(link.href); link.remove(); }, 100);
 }
 function openMedicationList() {
   const groups = getMedicationGroups();
@@ -3108,7 +3340,7 @@ function renderWelcomeStep() {
       </div>
       <div class="welcome-btn-row">
         <button class="welcome-btn" onclick="welcomeChecklist()">I&rsquo;m Ready</button>
-        <button class="welcome-btn-secondary" onclick="welcomeChecklist()">Skip for Now</button>
+        <button class="welcome-btn-secondary" onclick="welcomeSkipReview()">Skip for Now</button>
       </div>
     </div>`;
 
@@ -3178,6 +3410,12 @@ function welcomeChecklist() {
     return;
   }
   renderWelcomeStep();
+}
+
+function welcomeSkipReview() {
+  // Apply template but skip the per-med review — go straight to main app
+  applyWelcomeTemplate();
+  closeWelcome();
 }
 
 function closeWelcome() {
@@ -3626,6 +3864,8 @@ Object.assign(window, {
   cancelBackupImport,
   cancelMedForm,
   closeModal,
+  selectPainScore,
+  selectEditPainScore,
   closeSettings,
   confirmClearAllData,
   confirmFactoryReset,
@@ -3637,6 +3877,8 @@ Object.assign(window, {
   deleteMed,
   deleteWarning,
   dismissAlertBanner,
+  handlePurgeSoftDeleted,
+  confirmPurgeSoftDeleted,
   downloadFullBackup,
   downloadMedicationList,
   downloadReminder,
@@ -3696,6 +3938,7 @@ Object.assign(window, {
   toggleArchivedLog,
   renderRecoveryNote,
   welcomeChecklist,
+  welcomeSkipReview,
   reviewConfirm,
   reviewEdit,
   reviewCancelEdit,
@@ -3711,7 +3954,9 @@ Object.assign(window, {
   quickAddBack,
   quickAddConfirm,
   quickAddCustom,
-  quickAddCancel
+  quickAddCancel,
+  toggleSymptomChip,
+  getModalSeverity
 });
 
 
