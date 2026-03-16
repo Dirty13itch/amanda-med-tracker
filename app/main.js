@@ -76,10 +76,14 @@ let storageMeta = shared.createDefaultMeta();
 let _pendingPersist = Promise.resolve();
 
 function captureError(error, context) {
-  const source = context || 'runtime';
-  const raw = error && error.message ? error.message : String(error || 'Unknown error');
-  clientErrors.push(`[${source}] ${raw}`);
-  if (clientErrors.length > 25) clientErrors.shift();
+  const entry = {
+    context: context || 'runtime',
+    message: error?.message || String(error || 'Unknown error'),
+    stack: error?.stack ? error.stack.split('\n').slice(0, 4).join('\n') : null,
+    time: new Date().toISOString()
+  };
+  clientErrors.push(entry);
+  if (clientErrors.length > 50) clientErrors.shift();
 }
 
 window.addEventListener('error', event => captureError(event.error || event.message, 'window'));
@@ -848,15 +852,8 @@ function removeDose(id) {
 }
 // Rendering: each call is isolated so one failure doesn't break the whole refresh.
 function render() {
-  try{renderClock();}catch(e){console.error('renderClock:',e);}
-  try{renderDayCounter();}catch(e){console.error('renderDayCounter:',e);}
-  try{renderTrackedTotals();}catch(e){console.error('renderTrackedTotals:',e);}
-  try{renderWarnings();}catch(e){console.error('renderWarnings:',e);}
-  try{renderRecoveryNote();}catch(e){console.error('renderRecoveryNote:',e);}
-  try{renderCareSummary();}catch(e){console.error('renderCareSummary:',e);}
-  try{renderNextUp();}catch(e){console.error('renderNextUp:',e);}
-  try{renderCards();}catch(e){console.error('renderCards:',e);}
-  try{renderLog();}catch(e){console.error('renderLog:',e);}
+  const parts = [renderClock,renderDayCounter,renderTrackedTotals,renderWarnings,renderRecoveryNote,renderCareSummary,renderNextUp,renderCards,renderLog];
+  for (const fn of parts) { try { fn(); } catch(e) { captureError(e, 'render:' + fn.name); } }
 }
 
 function renderClock() {
@@ -971,7 +968,7 @@ function renderCareSummary() {
       return '';
     })()}
     <div class="disclaimer" style="margin-top:12px;padding:8px 12px;font-size:11px;color:var(--muted);border-top:1px solid var(--border);line-height:1.4">
-      <strong>Not medical advice.</strong> This app is a personal tracking tool only. Always follow your doctor&rsquo;s instructions. Timing suggestions are based on your configured intervals, not clinical judgment. If in doubt, call your care team.
+      <strong>Not medical advice.</strong> This app is a personal tracking tool only. Always follow your doctor&rsquo;s instructions. Timing suggestions are based on your configured intervals, not clinical judgment. All medication parameters (doses, intervals, maximums, conflicts) were entered by the user and have not been verified by any medical professional. If in doubt, call your care team.
     </div>
   </section>`;
 }
