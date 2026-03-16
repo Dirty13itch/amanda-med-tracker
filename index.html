@@ -28,7 +28,9 @@
   --bg:#121220;--card:#1c1c30;--text:#e8e8e8;--muted:#9e9e9e;--border:#2a2a40;
   --danger:#c0392b;--danger-bg:#3a1c1c;--danger-border:#c0392b;--warn-bg:#3a3018;--warn-border:#d4a017;
   --shadow:0 2px 12px rgba(0,0,0,.35);
-}}
+}
+.alert-warn{color:#d4b95e}
+}
 html{font-size:100%}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.5;font-size:1rem;min-height:100vh;min-height:100dvh;-webkit-text-size-adjust:100%;overflow-x:hidden;overscroll-behavior-y:contain}
 header{background:linear-gradient(135deg,#2d3436,#636e72);color:#fff;padding:16px 20px;position:sticky;top:0;z-index:100;box-shadow:0 2px 12px rgba(0,0,0,.15)}
@@ -171,7 +173,7 @@ body.bedside .ts-label{font-size:15px}
 .nqi-section-toggle{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:8px;margin-top:8px;background:none;border:none;color:var(--muted);font-size:13px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .nqi-section-toggle .chevron{display:inline-block;transition:transform .25s ease;font-size:11px}
 .nqi-section-toggle .chevron.open{transform:rotate(180deg)}
-.nqi-queue-wrap{overflow:hidden;transition:max-height .3s ease,opacity .25s ease;max-height:600px;opacity:1}
+.nqi-queue-wrap{overflow:hidden;transition:max-height .3s ease,opacity .25s ease;max-height:2000px;opacity:1}
 .nqi-queue-wrap.collapsed{max-height:0;opacity:0}
 .nqi-detail{overflow:hidden;max-height:0;opacity:0;transition:max-height .3s ease,opacity .2s ease,padding .3s ease;padding:0 14px;background:var(--card);border-radius:0 0 8px 8px;margin-top:-4px}
 .nqi-detail.open{max-height:200px;opacity:1;padding:12px 14px}
@@ -448,7 +450,7 @@ body.bedside .next-up-card.nuc-overdue{animation:none}
   .btn-log,.log-remove,.actions,.next-up{display:none!important}
   .card{break-inside:avoid;box-shadow:none;border:1px solid #ccc}
   .modal-overlay{display:none!important}
-  body{background:#fff}main{max-width:100%}
+  body{background:#fff;color:#000}main{max-width:100%}
   .settings-overlay{display:none!important}
 }
 .symptom-chip{display:inline-flex;align-items:center;min-height:44px;padding:6px 12px;border-radius:14px;border:1px solid var(--border);background:var(--card);font-size:0.82em;cursor:pointer;transition:all 0.15s}
@@ -488,7 +490,7 @@ body.bedside .next-up-card.nuc-overdue{animation:none}
   <div id="tracked-totals"></div>
   <div id="recovery-note" aria-live="polite"></div>
   <div id="care-summary"></div>
-  <div class="next-up" id="next-up" aria-label="Next medication due"></div>
+  <div class="next-up" id="next-up" role="region" aria-label="Next medication due"></div>
   <div class="med-cards" id="med-cards" role="list" aria-label="All medications"></div>
   <div class="log-section" id="log-section">
     <h2 onclick="toggleLog()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleLog()}" role="button" aria-expanded="true" aria-controls="log-full" tabindex="0">
