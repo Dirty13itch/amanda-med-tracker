@@ -550,7 +550,7 @@ function getReadinessStatus(info) {
     if (info.isScheduled && info.scheduledInfo) {
       return { dot:'green', text:`Due now (${fmt(info.scheduledInfo.dueAt,'time')})`, actionLabel:'Log Dose', canOpenModal:true, canLogRecommended:true };
     }
-    return { dot:'green', text:'Eligible now', actionLabel:'Log Dose', canOpenModal:true, canLogRecommended:true };
+    return { dot:'green', text: info.med.scheduleType === 'prn' ? 'Available if needed' : 'Eligible now', actionLabel:'Log Dose', canOpenModal:true, canLogRecommended:true };
   }
   if (info.conflictBlocked) {
     const conflictName = esc(info.conflictMed ? info.conflictMed.name : info.med.conflictsWith);
@@ -1098,9 +1098,14 @@ function renderLog() {
 let prevAvailability = {};
 let alertsInitialized = false;
 let alertBannerTimeout = null;
+let _lastChimeMs = 0;
 
 function playChime() {
   try {
+    // Rate-limit: at most one chime per 5 minutes to prevent alert fatigue
+    const chimeNow = Date.now();
+    if (chimeNow - _lastChimeMs < 300000) return;
+    _lastChimeMs = chimeNow;
     // Bedside mode: vibrate only, skip audio to avoid startling at night
     if (document.body.classList.contains('bedside')) {
       if (navigator.vibrate) navigator.vibrate([150, 80, 150]);
@@ -1143,9 +1148,11 @@ function showAlertBanner(text, isOverdue, medId) {
   logBtn.textContent = med ? `Open ${med.name}` : 'Open';
   logBtn.onclick = () => { dismissAlertBanner(); handleLog(medId); };
   clearTimeout(alertBannerTimeout);
-  // Bedside mode: don't auto-dismiss — banner stays until tapped (patient may be groggy)
-  if (!document.body.classList.contains('bedside')) {
-    alertBannerTimeout = setTimeout(dismissAlertBanner, isOverdue ? 120000 : 30000);
+  // Overdue banners persist until tapped (critical for adherence — shouldn't silently disappear)
+  // Bedside mode: all banners persist (patient may be groggy)
+  // Normal mode: only eligible banners auto-dismiss after 30s
+  if (!isOverdue && !document.body.classList.contains('bedside')) {
+    alertBannerTimeout = setTimeout(dismissAlertBanner, 30000);
   }
 }
 
@@ -1580,7 +1587,7 @@ function renderCards() {
         <div class="timer-bar"><div class="timer-fill" style="width:${info.progressPct}%;background:${info.isReadyRecommended?'var(--success)':med.color}"></div></div>
         ${trackedPct !== null ? `<div class="metric-group"><div class="metric-label"><span>24h total</span><span>${info.rollingTotal}mg / ${med.maxDaily}mg</span></div><div class="metric-bar"><div class="metric-bar-fill" style="width:${trackedPct}%;background:${trackedPct >= 90 ? 'var(--danger-border)' : trackedPct >= 70 ? 'var(--warn-border)' : 'var(--success)'}"></div></div></div>` : ''}
         ${supplyPct !== null ? `<div class="metric-group"><div class="metric-label"><span>Supply left</span><span>${supplyRemaining} / ${med.supplyOnHand} ${esc(getSupplyLabel(med))}</span></div><div class="metric-bar"><div class="metric-bar-fill" style="width:${supplyPct}%;background:${supplyTone}"></div></div></div>` : ''}
-        ${med.maxDoses ? `<div class="completion-dots">${Array.from({length:med.maxDoses},(_,i)=>`<span class="cd-dot" style="border-color:${med.color};${i<info.todayCount.length?'background:'+med.color:''}"></span>`).join('')}<span class="cd-label">${info.todayCount.length >= med.maxDoses ? 'All done!' : info.todayCount.length === 0 ? '0 of '+med.maxDoses+' today' : info.todayCount.length+' of '+med.maxDoses+' - '+(med.maxDoses-info.todayCount.length)+' to go'}</span></div>` : `<div class="card-today">Today: ${info.todayTabs} tab${info.todayTabs!==1?'s':''}${info.todayMg?' ('+info.todayMg+'mg)':''}</div>`}
+        ${med.maxDoses ? `<div class="completion-dots">${Array.from({length:med.maxDoses},(_,i)=>`<span class="cd-dot" style="border-color:${med.color};${i<info.todayCount.length?'background:'+med.color:''}"></span>`).join('')}<span class="cd-label">${info.todayCount.length >= med.maxDoses ? (med.scheduleType === 'prn' ? med.maxDoses+' of '+med.maxDoses+' used (limit)' : 'All done!') : info.todayCount.length === 0 ? '0 of '+med.maxDoses+' today' : info.todayCount.length+' of '+med.maxDoses+(med.scheduleType === 'prn' ? ' used' : ' - '+(med.maxDoses-info.todayCount.length)+' to go')}</span></div>` : `<div class="card-today">Today: ${info.todayTabs} tab${info.todayTabs!==1?'s':''}${info.todayMg?' ('+info.todayMg+'mg)':''}</div>`}
         ${warnsHtml}
         ${info.hardBlocked ? '' : `<button class="btn-reminder" onclick="event.stopPropagation();downloadReminder('${med.id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="7"/><path d="M12 9v4l2.5 1.5"/><path d="M5 3L2 6M22 6l-3-3"/></svg>Set Reminder</button>`}
         <button class="btn-log" style="background:${med.color}" onclick="handleLog('${med.id}')" ${status.canOpenModal ? '' : 'disabled'}>${status.actionLabel}</button>
