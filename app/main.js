@@ -1716,6 +1716,22 @@ function handleLog(medId) {
         return;
       }
     }
+    // Opioid tapering prompt: day 4+ soft interstitial
+    if (med.category === 'opioid') {
+      const day = getRecoveryDay();
+      if (day >= 4 && !window._opioidTaperAcked) {
+        window._opioidTaperAcked = true; // Only show once per session to avoid fatigue
+        showModal(`<h3>Day ${day} — Have you tried Tylenol first?</h3>
+          <p>Many patients manage pain with Tylenol alone by day 4-5 of recovery.</p>
+          <p>${esc(med.name)} is available if Tylenol isn't enough for breakthrough pain.</p>
+          ${day >= 7 ? `<p style="color:var(--danger-border)"><strong>Day 7+:</strong> If still needing opioids regularly, contact your surgeon.</p>` : ''}
+          <div class="modal-actions">
+            <button class="btn-cancel" onclick="closeModal()">Go Back</button>
+            <button class="btn-confirm" onclick="closeModal();handleLog('${medId}')">I Need ${esc(med.name)}</button>
+          </div>`);
+        return;
+      }
+    }
     if(med.conflictsWith) return showConflictModal(med);
     if(med.trackTotal) return showTrackedModal(med);
     if(med.maxTabs>1||findPairedMeds(medId).length>0) return showMultiTabModal(med);
@@ -1755,6 +1771,7 @@ function showMultiTabModal(med) {
     ${tabsHtml}${pairedHtml}
     ${renderTimeSelector()}
     ${renderLoggerField()}
+    ${renderSymptomField()}
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
       ${renderScheduledSkipButton(med, info)}
@@ -1804,14 +1821,21 @@ function showTrackedModal(med) {
   tabsHtml+='</div>';
   const maxTabMg=info.rollingTotal+med.maxTabs*med.perTab;
   const exceedWarn=maxTabMg>med.maxDaily?`<div class="warn-box">Taking ${med.maxTabs} tablets would exceed the ${med.maxDaily}mg daily maximum!</div>`:'';
+  // Paired meds (same as multi-tab modal)
+  const paired=findPairedMeds(med.id);
+  let pairedHtml='';
+  paired.forEach(pm=>{
+    pairedHtml+=`<label class="modal-check"><input type="checkbox" data-paired-med="${pm.id}"> Also log ${esc(pm.name)}${pm.brand?' ('+esc(pm.brand)+')':''} ${esc(pm.dose)} if it was taken now for ${esc(pm.purpose.toLowerCase())}</label>`;
+  });
   window._modalMedId=med.id;
   window._modalTabVal=defaultTabs;
-  showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''}</h3>${buildIntervalWarning(info)}
-    ${tabsHtml}
+  showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''}</h3>${buildSameDayComboWarning(med)}${buildIntervalWarning(info)}
+    ${tabsHtml}${pairedHtml}
     ${exceedWarn}
     <p style="font-size:13px;color:var(--muted)">24hr total so far: ${info.rollingTotal}mg / ${med.maxDaily}mg <span style="font-size:11px">(only doses logged here)</span></p>
     ${renderTimeSelector()}
     ${renderLoggerField()}
+    ${renderSymptomField()}
     <div class="modal-actions" style="margin-top:12px">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
       ${renderScheduledSkipButton(med, info)}
@@ -1856,26 +1880,46 @@ function confirmTracked() {
         </div>`);
       return;
     }
+    const loggedBy = CONFIG.profile?.defaultLoggerName || getModalLoggerName();
+    const pairedMedIds = [...document.querySelectorAll('[data-paired-med]')].filter(cb => cb.checked).map(cb => cb.dataset.pairedMed);
     const added = addDose(window._modalMedId, tabs, doseTime, {
-      loggedBy: CONFIG.profile?.defaultLoggerName || getModalLoggerName(),
+      loggedBy,
       symptomNote: getModalSymptomNote(),
       overrideType: info.intervalBlocked ? 'early' : '',
-      overrideReason: info.blockReason
+      overrideReason: info.blockReason,
+      pairedMedIds
     });
-    if (added) closeModal();
+    if (!added) return;
+    pairedMedIds.forEach(pairedMedId => addDose(pairedMedId, 1, doseTime, { loggedBy }));
+    closeModal();
   }
   catch(e) { console.error('confirmTracked error:',e); closeModal(); }
 }
 
+function buildSameDayComboWarning(med) {
+  // Warn about same-day opioid+benzo even when timing conflict has cleared
+  const isOpioid = med.category === 'opioid';
+  const isBenzo = med.category === 'benzodiazepine';
+  if (!isOpioid && !isBenzo) return '';
+  const t = todayStr();
+  const otherCat = isOpioid ? 'benzodiazepine' : 'opioid';
+  const otherToday = state.doses.some(d => {
+    const m = getMed(d.medId);
+    return m && m.category === otherCat && (d.actionType || 'dose') !== 'skip' && d.actionType !== 'removed' && fmt(d.time, 'date') === t;
+  });
+  if (!otherToday) return '';
+  return `<div class="warn-box" style="background:var(--warn-bg);border-color:var(--warn-border)"><strong>⚠️ Opioid + benzodiazepine today</strong><div style="font-size:13px;margin-top:4px">Both have been taken today. Even with doses separated by hours, the combination increases sedation and respiratory depression risk. Monitor for excessive drowsiness or slow breathing.</div></div>`;
+}
 function showConflictModal(med) {
   const info = getMedReadiness(med);
   const confirmLabel = info.canOverride ? `Override — Log ${esc(med.name)}` : `Log ${esc(med.name)}`;
   const confirmClass = info.canOverride ? 'btn-danger' : 'btn-confirm';
   const needsAck = info.conflictBlocked && info.canOverride;
-  showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''} ${esc(med.dose)}</h3>${buildConflictWarning(info)}${buildIntervalWarning(info)}
+  showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''} ${esc(med.dose)}</h3>${buildConflictWarning(info)}${buildSameDayComboWarning(med)}${buildIntervalWarning(info)}
     <p>${esc(med.purpose)} &mdash; 1 tablet</p>
     ${renderTimeSelector()}
     ${renderLoggerField()}
+    ${renderSymptomField()}
     ${needsAck ? `<div style="margin-top:10px;padding:8px;border:1px solid var(--danger);border-radius:6px;background:var(--danger-bg,rgba(231,76,60,0.1))">
       <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px;line-height:1.4">
         <input type="checkbox" id="conflict-ack" onchange="document.getElementById('conflict-override-btn').disabled=!this.checked" style="margin-top:3px;min-width:20px;min-height:20px">

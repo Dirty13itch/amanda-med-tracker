@@ -452,7 +452,7 @@ async function runPostSurgeryScenario(browser, baseUrl) {
     const pairedCheckbox = page.locator('[data-paired-med="hydroxyzine"]');
     assert((await pairedCheckbox.isChecked()) === false, 'Paired meds should be opt-in by default');
     await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: /^Log/ }).click({ force: true });
-    await waitForVisible(page, 'text=1 today');
+    await waitForVisible(page, 'text=1 of 6');
     const hydroTimerAfterSoloLog = await medicationCard(page, 'Hydroxyzine').locator('.card-timer').innerText();
     assert(/No doses logged yet/.test(hydroTimerAfterSoloLog), 'Hydroxyzine should not auto-log when the paired checkbox is left unchecked');
 

@@ -72,7 +72,10 @@ const AMANDA_MEDS = [
     isPrn: true,
     instructions: 'Use only when pain is not manageable with other options.',
     warns: [],
-    category: 'opioid'
+    category: 'opioid',
+    trackTotal: true,
+    maxDaily: 60,
+    maxDoses: 6
   },
   {
     id: 'tylenol',
