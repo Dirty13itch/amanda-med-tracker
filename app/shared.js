@@ -1,4 +1,4 @@
-export const APP_VERSION = '2.1.0';
+export const APP_VERSION = '2.2.0';
 export const APP_SCHEMA = 2;
 export const BACKUP_SCHEMA = 1;
 export const CONFIG_KEY = 'medtracker-config-v1';
@@ -22,16 +22,22 @@ export const COLOR_PALETTE = [
   '#00cec9'
 ];
 export const OVERDUE_GRACE_MIN = 30;
-export const DUPLICATE_WINDOW_MIN = 5;
+export const DUPLICATE_WINDOW_MIN = 15;
 export const INCORRECT_OXY_WARNING = 'Stop day after surgery unless itching or nausea';
 
 const DEFAULT_PROFILE = {
   allergies: [],
+  allergiesReviewed: false,
   conditions: [],
   emergencyContact: '',
   careLabel: '',
   defaultLoggerName: '',
-  importantInstructions: ''
+  importantInstructions: '',
+  bloodType: '',
+  dateOfBirth: '',
+  weight: '',
+  surgeonName: '',
+  surgeonPhone: ''
 };
 
 const DEFAULT_META = {
@@ -134,10 +140,10 @@ const AMANDA_MEDS = [
     scheduledTimes: [],
     isPrn: true,
     instructions: 'Do not take too close to Oxycodone.',
-    warns: ['DO NOT take within 1 hour of Oxycodone'],
+    warns: ['DO NOT take within 2 hours of Oxycodone — respiratory depression risk'],
     category: 'benzodiazepine',
     conflictsWith: 'oxycodone',
-    conflictMin: 60
+    conflictMin: 120
   },
   {
     id: 'cephalexin',
@@ -187,15 +193,44 @@ const AMANDA_MEDS = [
   }
 ];
 
+// Common medications database for Quick-Add picker
+const COMMON_MEDS = [
+  // Opioids
+  { id: 'oxycodone', name: 'Oxycodone', brand: '', dose: '5mg', perTab: 5, maxTabs: 2, unitLabel: 'mg', purpose: 'Pain Relief', reason: 'Breakthrough pain', freq: '1-2 tabs every 4 hrs as needed', intervalMin: 240, category: 'opioid', warns: ['May cause drowsiness and constipation', 'Do not take with alcohol'], instructions: 'Use only when pain is not manageable with Tylenol alone.' },
+  { id: 'hydrocodone-apap', name: 'Hydrocodone/APAP', brand: 'Norco', dose: '5-325mg', perTab: 5, maxTabs: 2, unitLabel: 'mg', purpose: 'Pain Relief', reason: 'Moderate to severe pain', freq: '1-2 tabs every 4-6 hrs as needed', intervalMin: 240, category: 'opioid', apapPerTab: 325, warns: ['Contains 325mg acetaminophen per tab — counts toward 4000mg daily Tylenol limit', 'May cause drowsiness'], instructions: 'Do not exceed 8 tablets in 24 hours.' },
+  { id: 'tramadol', name: 'Tramadol', brand: 'Ultram', dose: '50mg', perTab: 50, maxTabs: 2, unitLabel: 'mg', purpose: 'Pain Relief', reason: 'Moderate pain', freq: '1-2 tabs every 6 hrs as needed', intervalMin: 360, category: 'opioid', warns: ['May cause dizziness', 'Do not take with other opioids'], instructions: '' },
+  // Analgesics
+  { id: 'tylenol', name: 'Acetaminophen', brand: 'Tylenol', dose: '500mg', perTab: 500, maxTabs: 2, unitLabel: 'mg', purpose: 'Pain / Fever', reason: 'Pain or fever reduction', freq: '1-2 tabs every 4-6 hrs', intervalMin: 240, category: 'analgesic', warns: ['MAX 4000mg in 24 hours — includes combo meds'], instructions: 'Can alternate with ibuprofen if allowed.', trackTotal: true, maxDaily: 4000 },
+  { id: 'ibuprofen', name: 'Ibuprofen', brand: 'Advil', dose: '200mg', perTab: 200, maxTabs: 2, unitLabel: 'mg', purpose: 'Pain / Inflammation', reason: 'Pain and swelling', freq: '1-2 tabs every 6 hrs', intervalMin: 360, category: 'nsaid', warns: ['Take with food', 'Avoid after surgery unless cleared by doctor'], instructions: 'Check with surgeon before starting — often restricted post-op.' },
+  { id: 'naproxen', name: 'Naproxen', brand: 'Aleve', dose: '220mg', perTab: 220, maxTabs: 1, unitLabel: 'mg', purpose: 'Pain / Inflammation', reason: 'Long-lasting pain relief', freq: '1 tab every 8-12 hrs', intervalMin: 480, category: 'nsaid', warns: ['Take with food', 'Avoid after surgery unless cleared by doctor'], instructions: '' },
+  // Nerve / Muscle
+  { id: 'gabapentin', name: 'Gabapentin', brand: 'Neurontin', dose: '300mg', perTab: 300, maxTabs: 1, unitLabel: 'mg', purpose: 'Nerve Pain', reason: 'Neuropathic pain management', freq: '1 cap three times daily', intervalMin: 480, category: 'anticonvulsant', warns: ['May cause drowsiness', 'Do not stop abruptly'], instructions: 'Dose may be increased gradually per doctor.' },
+  { id: 'diazepam', name: 'Diazepam', brand: 'Valium', dose: '5mg', perTab: 5, maxTabs: 1, unitLabel: 'mg', purpose: 'Muscle Relaxer', reason: 'Muscle spasm or anxiety', freq: '1 tab every 6-8 hrs as needed', intervalMin: 360, category: 'benzodiazepine', warns: ['Do not combine with opioids without doctor approval — respiratory depression risk', 'May cause drowsiness'], instructions: 'Wait at least 2 hours after opioid doses.' },
+  { id: 'cyclobenzaprine', name: 'Cyclobenzaprine', brand: 'Flexeril', dose: '10mg', perTab: 10, maxTabs: 1, unitLabel: 'mg', purpose: 'Muscle Relaxer', reason: 'Muscle spasm relief', freq: '1 tab every 8 hrs as needed', intervalMin: 480, category: 'muscle-relaxant', warns: ['May cause drowsiness', 'Avoid with alcohol'], instructions: '' },
+  // Anti-nausea
+  { id: 'ondansetron', name: 'Ondansetron', brand: 'Zofran', dose: '4mg', perTab: 4, maxTabs: 1, unitLabel: 'mg', purpose: 'Anti-Nausea', reason: 'Nausea from anesthesia or opioids', freq: '1 tab every 6-8 hrs as needed', intervalMin: 360, category: 'antiemetic', warns: [], instructions: 'Dissolves on tongue — no water needed for ODT form.' },
+  { id: 'hydroxyzine', name: 'Hydroxyzine', brand: 'Vistaril', dose: '25mg', perTab: 25, maxTabs: 1, unitLabel: 'mg', purpose: 'Anti-Nausea / Itch', reason: 'Nausea, itching, or anxiety', freq: '1 tab every 4-6 hrs as needed', intervalMin: 240, category: 'antiemetic', warns: ['May cause drowsiness'], instructions: 'Can be taken with opioids for nausea prevention.' },
+  // Antibiotics
+  { id: 'cephalexin', name: 'Cephalexin', brand: 'Keflex', dose: '500mg', perTab: 500, maxTabs: 1, unitLabel: 'mg', purpose: 'Antibiotic', reason: 'Infection prevention', freq: '1 tab four times daily', intervalMin: 360, category: 'antibiotic', scheduled: true, scheduleType: 'scheduled', scheduledTimes: ['08:00', '12:00', '17:00', '21:00'], maxDoses: 4, warns: ['Complete full course even if feeling better'], instructions: 'Take with or without food.' },
+  { id: 'amoxicillin', name: 'Amoxicillin', brand: 'Amoxil', dose: '500mg', perTab: 500, maxTabs: 1, unitLabel: 'mg', purpose: 'Antibiotic', reason: 'Infection prevention', freq: '1 tab three times daily', intervalMin: 480, category: 'antibiotic', scheduled: true, scheduleType: 'scheduled', scheduledTimes: ['08:00', '14:00', '20:00'], maxDoses: 3, warns: ['Complete full course even if feeling better'], instructions: 'Take with or without food.' },
+  // GI / Stool
+  { id: 'docusate', name: 'Docusate Sodium', brand: 'Colace', dose: '100mg', perTab: 100, maxTabs: 1, unitLabel: 'mg', purpose: 'Stool Softener', reason: 'Prevent constipation from opioids', freq: '1 cap twice daily', intervalMin: 720, category: 'stool-softener', warns: [], instructions: 'Start when beginning opioid medications.' },
+  { id: 'senna', name: 'Senna', brand: 'Senokot', dose: '8.6mg', perTab: 8.6, maxTabs: 2, unitLabel: 'mg', purpose: 'Laxative', reason: 'Constipation from opioids', freq: '1-2 tabs at bedtime', intervalMin: 1440, category: 'stool-softener', warns: [], instructions: 'Can combine with docusate for best results.' },
+  { id: 'omeprazole', name: 'Omeprazole', brand: 'Prilosec', dose: '20mg', perTab: 20, maxTabs: 1, unitLabel: 'mg', purpose: 'Stomach Protection', reason: 'Acid reflux or stomach protection', freq: '1 cap once daily before breakfast', intervalMin: 1440, category: 'gi', warns: [], instructions: 'Take 30 minutes before eating.' },
+  // Other
+  { id: 'prednisone', name: 'Prednisone', brand: '', dose: '10mg', perTab: 10, maxTabs: 1, unitLabel: 'mg', purpose: 'Anti-Inflammatory', reason: 'Reduce swelling', freq: 'Per taper schedule', intervalMin: 1440, category: 'steroid', warns: ['Do not stop abruptly — follow taper schedule', 'Take with food'], instructions: 'Follow your doctor\'s specific taper instructions.' },
+  { id: 'lorazepam', name: 'Lorazepam', brand: 'Ativan', dose: '0.5mg', perTab: 0.5, maxTabs: 1, unitLabel: 'mg', purpose: 'Anti-Anxiety', reason: 'Anxiety or sleep', freq: '1 tab every 8 hrs as needed', intervalMin: 480, category: 'benzodiazepine', warns: ['Do not combine with opioids without doctor approval — respiratory depression risk', 'May cause drowsiness'], instructions: '' }
+];
+
 const AMANDA_WARNINGS = [
   { type: 'danger', title: 'No NSAIDs for 2 Weeks', text: 'No Ibuprofen, Advil, Aleve, Aspirin, or Celebrex' },
-  { type: 'warn', title: 'Oxycodone + Valium Separation', text: 'Must wait at least 1 hour between these two medications' }
+  { type: 'danger', title: 'Oxycodone + Valium Separation', text: 'Must wait at least 2 hours between these two medications — combined use increases respiratory depression risk' }
 ];
 
 const AMANDA_RECOVERY_NOTES = [
-  { minDay: 14, maxDay: Infinity, noteType: 'rn-success', text: 'Day {day} - NSAID restriction period may be ending. Check with your surgeon before taking Ibuprofen or Aspirin.' },
-  { minDay: 7, maxDay: 13, noteType: 'rn-info', text: 'Day {day} - Cephalexin course may be ending soon. Check with your doctor about stopping the antibiotic.' },
-  { minDay: 3, maxDay: 6, noteType: 'rn-info', text: 'Day {day} - Focus on keeping up with Cephalexin. If pain is manageable, consider Tylenol-only windows to taper opioid use.' }
+  { minDay: 14, maxDay: Infinity, noteType: 'rn-success', text: 'Day {day} — Ask your surgeon about NSAID restrictions before taking Ibuprofen or Aspirin.' },
+  { minDay: 7, maxDay: 13, noteType: 'rn-info', text: 'Day {day} — Check with your doctor about the Cephalexin course and any medication changes.' },
+  { minDay: 3, maxDay: 6, noteType: 'rn-info', text: 'Day {day} — Keep up with scheduled Cephalexin doses. Discuss pain management options with your care team.' }
 ];
 
 function cleanArray(values) {
@@ -357,7 +392,7 @@ export function normalizeMed(med = {}) {
   const archived = Boolean(med.archived);
   const warns = cleanArray(med.warns).filter(warning => !(String(med.id || '').trim() === 'oxycodone' && warning === INCORRECT_OXY_WARNING));
   return {
-    id: String(med.id || `med-${Date.now()}`),
+    id: String(med.id || `med-${Date.now()}`).replace(/[^a-zA-Z0-9_-]/g, ''),
     name: String(med.name || '').trim(),
     brand: String(med.brand || '').trim(),
     dose: String(med.dose || '').trim(),
@@ -368,8 +403,8 @@ export function normalizeMed(med = {}) {
     reason: String(med.reason || '').trim(),
     freq: String(med.freq || '').trim(),
     intervalMin: Math.max(1, Number.isFinite(Number(med.intervalMin)) ? Number(med.intervalMin) : 240),
-    color: String(med.color || COLOR_PALETTE[0]),
-    bgBadge: String(med.bgBadge || '#f0f0f0'),
+    color: sanitizeImportedColor(med.color, COLOR_PALETTE[0]),
+    bgBadge: sanitizeImportedColor(med.bgBadge, '#f0f0f0'),
     scheduled: scheduleType === 'scheduled',
     scheduleType,
     scheduledTimes,
@@ -390,6 +425,7 @@ export function normalizeMed(med = {}) {
     supplyLabel: String(med.supplyLabel || 'units').trim() || 'units',
     archived,
     pinned: Boolean(med.pinned),
+    apapPerTab: Number.isFinite(Number(med.apapPerTab)) ? Number(med.apapPerTab) : 0,
     prescriber: String(med.prescriber || '').trim(),
     pharmacy: String(med.pharmacy || '').trim()
   };
@@ -422,12 +458,13 @@ export function normalizeConfig(config = {}) {
     recoveryNotes: Array.isArray(config.recoveryNotes)
       ? config.recoveryNotes.map(note => ({
           minDay: Number.isFinite(Number(note.minDay)) ? Number(note.minDay) : 0,
-          maxDay: note.maxDay === Infinity ? Infinity : (Number.isFinite(Number(note.maxDay)) ? Number(note.maxDay) : Infinity),
+          maxDay: (note.maxDay == null || note.maxDay === Infinity || note.maxDay >= 99999) ? Infinity : (Number.isFinite(Number(note.maxDay)) ? Number(note.maxDay) : Infinity),
           noteType: String(note.noteType || 'rn-info'),
           text: String(note.text || '').trim()
         })).filter(note => note.text)
       : [],
     colorPalette: Array.isArray(config.colorPalette) && config.colorPalette.length ? [...config.colorPalette] : [...COLOR_PALETTE],
+    scheduleTimezone: config.scheduleTimezone || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : '') || '',
     profile: normalizeProfile(config.profile || {})
   };
 }
@@ -586,11 +623,17 @@ export function getCurrentSupply(med, state) {
   return Math.max(0, normalizedMed.supplyOnHand - used);
 }
 
+export function getCommonMeds() {
+  return JSON.parse(JSON.stringify(COMMON_MEDS));
+}
+
 export function isDuplicateDose(state, medId, tabs, time) {
   const targetTime = new Date(time || Date.now());
+  // Flag ANY dose of the same medication within the window, regardless of tab count.
+  // A groggy patient logging 1 tab then 2 tabs is still a near-miss double-dose.
   return dosesForMed(state, medId).some(dose => {
     if (dose.actionType && dose.actionType !== 'dose') return false;
     const minutes = Math.abs(targetTime - new Date(dose.time)) / 60000;
-    return dose.tabs === tabs && minutes <= DUPLICATE_WINDOW_MIN;
+    return minutes <= DUPLICATE_WINDOW_MIN;
   });
 }

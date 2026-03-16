@@ -152,6 +152,26 @@ async function commitFieldChange(page, selector, value) {
   }, value);
 }
 
+async function completeOnboardingSteps(page) {
+  // Checklist step: click "I'm Ready" or "Skip for Now"
+  const checklistBtn = page.locator('.welcome-checklist').locator('..').locator('button').first();
+  if (await checklistBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await checklistBtn.click();
+  }
+  // Review step: click "Looks Good" for each med
+  for (let i = 0; i < 10; i++) {
+    const looksGood = page.locator('.review-btn-confirm');
+    if (await looksGood.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await looksGood.click();
+    } else break;
+  }
+  // Review done: click "Done — Let's Go"
+  const reviewDone = page.locator('.review-done .welcome-btn-secondary');
+  if (await reviewDone.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await reviewDone.click();
+  }
+}
+
 async function startPostSurgery(page, baseUrl, name = 'QA') {
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
   await waitForVisible(page, 'text=Welcome to Med Tracker');
@@ -159,6 +179,8 @@ async function startPostSurgery(page, baseUrl, name = 'QA') {
   await page.getByRole('button', { name: 'Get Started' }).click();
   await waitForVisible(page, 'text=Choose a Starting Point');
   await page.locator('.welcome-tpl').filter({ hasText: 'Post-Surgery Recovery' }).click();
+  // New onboarding: click through checklist + review steps
+  await completeOnboardingSteps(page);
   await medicationCard(page, 'Oxycodone').waitFor({ state: 'visible', timeout: 15000 });
 }
 
@@ -171,12 +193,19 @@ async function startScratch(page, baseUrl) {
   await page.getByRole('button', { name: 'Get Started' }).click();
   await waitForVisible(page, 'text=Choose a Starting Point');
   await page.locator('.welcome-tpl').filter({ hasText: 'Start from Scratch' }).click();
+  // New onboarding: click through checklist (no meds = auto-closes after checklist)
+  await completeOnboardingSteps(page);
   await waitForVisible(page, 'text=QA\'s Med Tracker');
 }
 
 async function addScratchMedication(page) {
   await openSettings(page);
   await page.locator('#settings-panel').getByRole('button', { name: '+ Add Medication' }).click();
+  // Quick-Add picker now shows first — click "Custom medication" to get blank form
+  const customBtn = page.locator('.quick-add-custom');
+  if (await customBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await customBtn.click();
+  }
   await page.getByRole('button', { name: 'Add', exact: true }).click();
   await waitForVisible(page, 'text=Name is required');
 
@@ -236,7 +265,7 @@ async function runScratchScenario(browser, baseUrl) {
     await medicationCard(page, 'Ibuprofen').getByRole('button', { name: 'Log Dose' }).click({ force: true });
     await page.getByRole('button', { name: /2 tabs 400mg/ }).click();
     await page.getByRole('button', { name: '30m ago' }).click();
-    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click({ force: true });
+    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: /^Log/ }).click({ force: true });
     await waitForVisible(page, 'text=Available in');
     await waitForVisible(page, 'text=24hr total: 400mg');
 
@@ -287,7 +316,7 @@ async function runScratchScenario(browser, baseUrl) {
     await medicationCard(page, 'Ibuprofen').getByRole('button', { name: 'Log Dose' }).click({ force: true });
     await page.getByRole('button', { name: /1 tab 200mg/ }).click();
     await page.getByRole('button', { name: 'Just now' }).click();
-    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click({ force: true });
+    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: /^Log/ }).click({ force: true });
     await page.getByRole('button', { name: /Edit Ibuprofen entry at/ }).click();
     await page.locator('#edit-dose-note').fill('With food');
     await page.getByRole('button', { name: 'Save Changes' }).click();
@@ -302,7 +331,7 @@ async function runScratchScenario(browser, baseUrl) {
       return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
     });
     await page.locator('#ts-custom-time').fill(retroTime);
-    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click({ force: true });
+    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: /^Log/ }).click({ force: true });
     const retroDose = await page.evaluate(() => {
       const doses = state.doses
         .filter(entry => entry.medId === 'ibuprofen')
@@ -393,7 +422,7 @@ async function runScratchScenario(browser, baseUrl) {
       assert(offlineAssetResults.every(Boolean), 'Offline reload should serve cached manifest and icon');
       await medicationCard(page, 'Ibuprofen').getByRole('button', { name: 'Log Dose' }).click({ force: true });
       await page.getByRole('button', { name: /1 tab 200mg/ }).click();
-      await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click({ force: true });
+      await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: /^Log/ }).click({ force: true });
       await waitForVisible(page, 'text=24hr total: 200mg');
       await page.reload({ waitUntil: 'domcontentloaded' });
       await waitForVisible(page, 'text=24hr total: 200mg');
@@ -422,7 +451,7 @@ async function runPostSurgeryScenario(browser, baseUrl) {
     await waitForVisible(page, 'text=Also log Hydroxyzine');
     const pairedCheckbox = page.locator('[data-paired-med="hydroxyzine"]');
     assert((await pairedCheckbox.isChecked()) === false, 'Paired meds should be opt-in by default');
-    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click({ force: true });
+    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: /^Log/ }).click({ force: true });
     await waitForVisible(page, 'text=1 today');
     const hydroTimerAfterSoloLog = await medicationCard(page, 'Hydroxyzine').locator('.card-timer').innerText();
     assert(/No doses logged yet/.test(hydroTimerAfterSoloLog), 'Hydroxyzine should not auto-log when the paired checkbox is left unchecked');
@@ -430,9 +459,9 @@ async function runPostSurgeryScenario(browser, baseUrl) {
     await medicationCard(page, 'Oxycodone').getByRole('button', { name: 'Review Timing' }).click({ force: true });
     await waitForVisible(page, 'text=Also log Hydroxyzine');
     await pairedCheckbox.check({ force: true });
-    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click({ force: true });
-    if (await page.locator('text=Possible duplicate dose').count()) {
-      await page.getByRole('button', { name: 'Log Anyway' }).click();
+    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: /^Log/ }).click({ force: true });
+    if (await page.locator('text=Possible duplicate').count()) {
+      await page.getByRole('button', { name: /Confirm Separate|Log Anyway/ }).click();
     }
     await waitForVisible(page, 'text=2 today');
     const hydroTimerAfterPairedLog = await medicationCard(page, 'Hydroxyzine').locator('.card-timer').innerText();
@@ -443,12 +472,12 @@ async function runPostSurgeryScenario(browser, baseUrl) {
     assert(/Wait/.test(diazepamStatus), 'Diazepam should show a wait state after Oxycodone');
     await medicationCard(page, 'Diazepam').getByRole('button', { name: 'Review Timing' }).click({ force: true });
     await waitForVisible(page, 'text=WARNING:');
-    await waitForVisible(page, 'text=Log Anyway');
+    await waitForVisible(page, 'text=Override');
     await page.keyboard.press('Escape');
 
     await medicationCard(page, 'Tylenol').getByRole('button', { name: 'Log Dose' }).click({ force: true });
     await waitForVisible(page, 'text=24hr total so far: 0mg / 4000mg');
-    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click();
+    await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: /^Log/ }).click();
     await waitForVisible(page, 'text=1000mg / 4000mg');
 
     await page.locator('.actions').getByRole('button', { name: 'Medication List' }).click();
@@ -498,7 +527,7 @@ async function runMobileLayoutAudit(browser, baseUrl) {
       await medicationCard(page, 'Oxycodone').getByRole('button', { name: 'Log Dose' }).click({ force: true });
       await waitForVisible(page, 'text=How many tablets?');
       await assertHealthyLayout(page, `${viewport.name} multi-tab modal`);
-      await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: 'Log Dose' }).click({ force: true });
+      await page.getByRole('dialog', { name: 'Medication action' }).getByRole('button', { name: /^Log/ }).click({ force: true });
 
       await medicationCard(page, 'Diazepam').getByRole('button', { name: 'Review Timing' }).click({ force: true });
       await waitForVisible(page, 'text=WARNING:');
@@ -563,6 +592,7 @@ async function runDesktopSanity(browser, baseUrl) {
     await page.getByRole('button', { name: 'Get Started' }).click();
     await waitForVisible(page, 'text=Choose a Starting Point');
     await page.locator('.welcome-tpl').filter({ hasText: 'Daily Routine' }).click();
+    await completeOnboardingSteps(page);
     await medicationCard(page, 'Morning Vitamin').waitFor({ state: 'visible', timeout: 15000 });
     const morningStatus = await medicationCard(page, 'Morning Vitamin').locator('.card-status').innerText();
     assert(/due|overdue/i.test(morningStatus), 'Scheduled morning medication should show a due status');

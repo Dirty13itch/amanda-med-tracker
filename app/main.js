@@ -128,6 +128,15 @@ function persistBundle(reason) {
     })
     .catch(error => {
       captureError(error, reason);
+      // Show visible warning when data persistence fails — user needs to know their dose may not be saved
+      try {
+        const banner = document.createElement('div');
+        banner.className = 'card-warn';
+        banner.style.cssText = 'position:fixed;bottom:60px;left:10px;right:10px;z-index:9999;padding:12px;font-size:13px;text-align:center;border-radius:8px;animation:fadeIn 0.3s';
+        banner.innerHTML = '<strong>⚠️ Save failed</strong> — your last change may not be saved. <a href="#" onclick="downloadFullBackup();this.parentNode.remove();return false" style="color:inherit;text-decoration:underline">Back up now</a> <button onclick="this.parentNode.remove()" style="margin-left:8px;background:none;border:none;color:inherit;cursor:pointer;font-size:16px">&times;</button>';
+        document.body.appendChild(banner);
+        setTimeout(() => { if (banner.parentNode) banner.remove(); }, 15000);
+      } catch (e) { /* UI error during error handling — swallow */ }
       return null;
     });
   return _pendingPersist;
@@ -206,7 +215,7 @@ function save() {
 
 function getMed(id) {
  return MEDS.find(m=>m.id===id); }
-function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function now() { return new Date(); }
 function todayStr() { return fmt(now(),'date'); }
 function fmt(d,type) {
@@ -281,7 +290,7 @@ function medEventsForMed(medId, options = {}) {
     .sort((a,b)=>new Date(b.time)-new Date(a.time));
 }
 function dosesForMed(medId, options = {}) {
-  return medEventsForMed(medId, options).filter(d => (d.actionType || 'dose') !== 'skip');
+  return medEventsForMed(medId, options).filter(d => { const t = d.actionType || 'dose'; return t !== 'skip' && t !== 'removed'; });
 }
 function lastDose(medId, referenceDate = now(), options = {}) {
   const ref = new Date(referenceDate || now());
@@ -302,12 +311,23 @@ function todayDoses(medId, referenceDate = now(), options = {}) {
 function rolling24hTotal(medId, referenceDate = now(), options = {}) {
   const ref = new Date(referenceDate || now());
   const cutoff = new Date(ref.getTime() - 24 * 3600000);
-  return dosesForMed(medId, options)
-    .filter(d => {
-      const time = new Date(d.time);
-      return time >= cutoff && time <= ref;
-    })
+  const med = getMed(medId);
+  let total = dosesForMed(medId, options)
+    .filter(d => { const time = new Date(d.time); return time >= cutoff && time <= ref; })
     .reduce((s,d)=>s+d.mg,0);
+  // Cross-medication acetaminophen tracking: if this med tracks APAP totals,
+  // also count APAP from combination meds (e.g., Hydrocodone/APAP contains 325mg APAP per tab)
+  if (med && med.trackTotal && med.category === 'analgesic' && med.name.toLowerCase().includes('acetaminophen') || (med && med.trackTotal && med.id === 'tylenol')) {
+    MEDS.forEach(other => {
+      if (other.id === medId || other.archived) return;
+      if (other.apapPerTab && other.apapPerTab > 0) {
+        total += dosesForMed(other.id, options)
+          .filter(d => { const time = new Date(d.time); return time >= cutoff && time <= ref && (d.actionType || 'dose') === 'dose'; })
+          .reduce((s,d) => s + (d.tabs * other.apapPerTab), 0);
+      }
+    });
+  }
+  return total;
 }
 function findPairedMeds(medId) { return MEDS.filter(m=>m.pairedWith===medId); }
 function getDoseAgeMinutes(dose, referenceDate) {
@@ -388,10 +408,16 @@ function getMedReadiness(med, atDate, options = {}) {
   const scheduledInfo = getScheduledReadiness(med, referenceDate, options);
   const scheduleRemaining = scheduledInfo ? scheduledInfo.minutesUntilDue : 0;
   const intervalRemaining = scheduledInfo ? scheduleRemaining : (ago!==null&&ago<med.intervalMin ? med.intervalMin-ago : 0);
-  const conflictMed = med.conflictsWith ? getMed(med.conflictsWith) : null;
-  const lastConflict = med.conflictsWith ? lastDose(med.conflictsWith, referenceDate, options) : null;
+  // Bidirectional conflict: check both directions
+  // 1) This med declares conflictsWith another med
+  // 2) Another med declares conflictsWith THIS med (reverse lookup)
+  const forwardConflict = med.conflictsWith ? getMed(med.conflictsWith) : null;
+  const reverseConflict = MEDS.find(m => m.id !== med.id && m.conflictsWith === med.id && !m.archived) || null;
+  const conflictMed = forwardConflict || reverseConflict;
+  const conflictMin = forwardConflict ? med.conflictMin : (reverseConflict ? reverseConflict.conflictMin : med.conflictMin);
+  const lastConflict = conflictMed ? lastDose(conflictMed.id, referenceDate, options) : null;
   const conflictAgo = getDoseAgeMinutes(lastConflict, referenceDate);
-  const conflictRemaining = conflictAgo!==null&&med.conflictMin&&conflictAgo<med.conflictMin ? med.conflictMin-conflictAgo : 0;
+  const conflictRemaining = conflictAgo!==null&&conflictMin&&conflictAgo<conflictMin ? conflictMin-conflictAgo : 0;
   const maxDoseBlocked = !!(med.maxDoses&&todayCount.length>=med.maxDoses);
   const dailyLimitReached = !!(med.trackTotal&&rollingTotal>=med.maxDaily);
   const minimumDoseExceedsLimit = !!(med.trackTotal&&rollingTotal + med.perTab > med.maxDaily);
@@ -407,7 +433,7 @@ function getMedReadiness(med, atDate, options = {}) {
     : intervalBlocked ? (scheduledInfo ? 'scheduled' : 'interval')
     : null;
   const progressWindow = primaryBlock === 'conflict'
-    ? Math.max(med.conflictMin||1, 1)
+    ? Math.max(conflictMin||1, 1)
     : Math.max(med.intervalMin||1, 1);
   const progressPct = hardBlocked ? 100 : conflictBlocked && conflictRemaining > baseRemaining
     ? Math.max(0, Math.min(100, (1 - (conflictRemaining / progressWindow)) * 100))
@@ -415,9 +441,10 @@ function getMedReadiness(med, atDate, options = {}) {
       ? Math.max(0, Math.min(100, (1 - (minutesUntilEligible / progressWindow)) * 100))
       : 100));
   const isReadyRecommended = !hardBlocked && minutesUntilEligible <= 0;
+  // Only scheduled meds can be "overdue" — PRN meds just become "available"
   const isOverdue = scheduledInfo
     ? (!hardBlocked && !conflictBlocked && scheduledInfo.isOverdue)
-    : (!hardBlocked && !intervalBlocked && !conflictBlocked && ago!==null && (ago-med.intervalMin) > OVERDUE_GRACE_MIN);
+    : (med.scheduleType === 'scheduled' && !hardBlocked && !intervalBlocked && !conflictBlocked && ago!==null && (ago-med.intervalMin) > OVERDUE_GRACE_MIN);
   const conflictName = conflictMed ? conflictMed.name : med.conflictsWith;
   const blockReason = dailyLimitBlocked
     ? (dailyLimitReached ? `24-hour limit reached (${med.maxDaily}mg)` : `Another dose would exceed the 24-hour maximum`)
@@ -441,6 +468,7 @@ function getMedReadiness(med, atDate, options = {}) {
     lastConflict,
     conflictMed,
     conflictAgo,
+    conflictMin,
     intervalRemaining,
     conflictRemaining,
     intervalBlocked,
@@ -505,10 +533,10 @@ function getReadinessStatus(info) {
     if (info.isScheduled && info.scheduledInfo) {
       return { dot:'green', text:`Due now (${fmt(info.scheduledInfo.dueAt,'time')})`, actionLabel:'Log Dose', canOpenModal:true, canLogRecommended:true };
     }
-    return { dot:'green', text:'Ready now', actionLabel:'Log Dose', canOpenModal:true, canLogRecommended:true };
+    return { dot:'green', text:'Eligible now', actionLabel:'Log Dose', canOpenModal:true, canLogRecommended:true };
   }
   if (info.conflictBlocked) {
-    const conflictName = info.conflictMed ? info.conflictMed.name : info.med.conflictsWith;
+    const conflictName = esc(info.conflictMed ? info.conflictMed.name : info.med.conflictsWith);
     return { dot:'gray', text:`Wait ${minsToHM(info.conflictRemaining)} after ${conflictName}`, actionLabel:'Review Timing', canOpenModal:true, canLogRecommended:false };
   }
   if (info.isScheduled && info.scheduledInfo) {
@@ -519,7 +547,7 @@ function getReadinessStatus(info) {
 
 function getQueueTimeLabel(info) {
   if (info.isOverdue) return 'Overdue';
-  if (info.isReadyRecommended) return 'Ready';
+  if (info.isReadyRecommended) return 'Eligible';
   if (info.conflictBlocked) return `Wait ${minsToHM(info.minutesUntilEligible)}`;
   if (info.isScheduled && info.scheduledInfo) return `Due ${fmt(info.scheduledInfo.dueAt,'time')}`;
   return minsToHM(info.minutesUntilEligible);
@@ -585,12 +613,12 @@ function showDuplicateDoseModal(medId, tabs, doseTime, options) {
   const med = getMed(medId);
   if (!med) return;
   window._duplicateDoseRequest = { medId, tabs, doseTime, options: options || {} };
-  showModal(`<h3>Possible duplicate dose</h3>
-    <p>${esc(med.name)} already has a ${tabs}-tab entry within ${DUPLICATE_WINDOW_MIN} minutes of ${fmt(doseTime,'time')}.</p>
-    <div class="warn-box">Confirm only if this was a separate real dose.</div>
+  showModal(`<h3>Possible duplicate — ${esc(med.name)}</h3>
+    <p>${esc(med.name)} already has a dose logged within ${DUPLICATE_WINDOW_MIN} minutes of ${fmt(doseTime,'time')}.</p>
+    <div class="warn-box"><strong>Are you sure this was a separate dose?</strong> Double-dosing can be dangerous, especially with opioids and sedatives.</div>
     <div class="modal-actions">
-      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
-      <button class="btn-danger" onclick="confirmDuplicateDose()">Log Anyway</button>
+      <button class="btn-cancel" onclick="closeModal()">Cancel — Not a New Dose</button>
+      <button class="btn-danger" onclick="confirmDuplicateDose()">Yes, Confirm Separate Dose</button>
     </div>`);
 }
 
@@ -639,6 +667,8 @@ function addDose(medId, tabs, customTime, options) {
     doseId = dose.id;
     state.doses.push(dose);
     state.lastAction = { type: 'add-dose', doseId: dose.id };
+    // Write-ahead to localStorage before async IDB persist — ensures dose survives tab close
+    try { localStorage.setItem(DOSES_KEY, JSON.stringify(state)); } catch(e) { /* best effort */ }
     if (navigator.vibrate) navigator.vibrate(50);
     prevAvailability[medId] = false;
     save();
@@ -773,8 +803,11 @@ function undoLastDose() {
 function removeDose(id) {
   try {
     const removed = state.doses.find(d => d.id === id) || null;
-    state.doses = state.doses.filter(d => d.id !== id);
-    state.lastAction = removed ? { type: 'remove-dose', dose: removed } : null;
+    if (removed) {
+      removed.actionType = 'removed';
+      removed.removedAt = now().toISOString();
+    }
+    state.lastAction = removed ? { type: 'remove-dose', dose: {...removed} } : null;
     save(); render();
   } catch(e) { console.error('removeDose error:',e); captureError(e, 'removeDose'); try{save();render();}catch(e2){ captureError(e2, 'removeDose-recovery'); } }
 }
@@ -866,16 +899,21 @@ function renderCareSummary() {
       <div class="summary-panel">
         <h3>Profile</h3>
         <div class="summary-item"><strong>Patient</strong>${esc(CONFIG.patientName || 'Not set')}</div>
-        ${profile.emergencyContact ? `<div class="summary-item" style="margin-top:8px"><strong>Emergency Contact</strong>${esc(profile.emergencyContact)}</div>` : ''}
+        ${profile.dateOfBirth ? `<div class="summary-item" style="margin-top:8px"><strong>DOB</strong>${esc(profile.dateOfBirth)}${profile.dateOfBirth ? ` (age ${Math.floor((now() - new Date(profile.dateOfBirth)) / 31557600000)})` : ''}</div>` : ''}
+        ${profile.bloodType ? `<div class="summary-item" style="margin-top:8px"><strong>Blood Type</strong>${esc(profile.bloodType)}</div>` : ''}
+        ${profile.weight ? `<div class="summary-item" style="margin-top:8px"><strong>Weight</strong>${esc(profile.weight)}</div>` : ''}
+        ${profile.surgeonName ? `<div class="summary-item" style="margin-top:8px"><strong>Surgeon</strong>${esc(profile.surgeonName)}${profile.surgeonPhone ? ` — ${esc(profile.surgeonPhone)}` : ''}</div>` : ''}
+        <div class="summary-item" style="margin-top:8px"><strong>Emergency Contact</strong>${profile.emergencyContact ? esc(profile.emergencyContact) : '<span style="color:var(--danger)">⚠️ NOT SET</span>'}</div>
         ${profile.importantInstructions ? `<div class="summary-item" style="margin-top:8px"><strong>Important Instructions</strong>${esc(profile.importantInstructions)}</div>` : ''}
       </div>
       <div class="summary-panel">
         <h3>Key Safety Context</h3>
-        <div class="summary-item"><strong>Allergies</strong>${profile.allergies.length ? `<div class="summary-list">${profile.allergies.map(item => `<span class="summary-chip">${esc(item)}</span>`).join('')}</div>` : 'None listed'}</div>
+        <div class="summary-item"><strong>Allergies</strong>${profile.allergies.length ? `<div class="summary-list">${profile.allergies.map(item => `<span class="summary-chip">${esc(item)}</span>`).join('')}</div>` : (profile.allergiesReviewed ? '<span style="color:var(--success)">NKDA (No Known Drug Allergies)</span>' : '<span style="color:var(--danger)">⚠️ NOT REVIEWED</span>')}</div>
         <div class="summary-item" style="margin-top:8px"><strong>Conditions</strong>${profile.conditions.length ? `<div class="summary-list">${profile.conditions.map(item => `<span class="summary-chip">${esc(item)}</span>`).join('')}</div>` : 'None listed'}</div>
         ${lowSupply.length ? `<div class="summary-item" style="margin-top:8px"><strong>Low Supply</strong>${lowSupply.map(item => `${esc(item.med.name)} (${item.remaining} ${esc(getSupplyLabel(item.med))} left)`).join(', ')}</div>` : ''}
       </div>
     </div>
+    <div class="card-warn" style="margin-top:10px;font-size:12px">⚠️ <strong>Single-device tracker.</strong> Data is stored only on this device. If multiple caregivers log doses, use one shared device to prevent double-dosing.</div>
     <div class="storage-health">
       <div class="storage-tile"><strong>Version</strong><span>${esc(APP_VERSION)}</span></div>
       <div class="storage-tile"><strong>Storage</strong><span>${esc(String(health.backend || 'localStorage'))}</span></div>
@@ -896,6 +934,9 @@ function renderCareSummary() {
       }
       return '';
     })()}
+    <div class="disclaimer" style="margin-top:12px;padding:8px 12px;font-size:11px;color:var(--muted);border-top:1px solid var(--border);line-height:1.4">
+      <strong>Not medical advice.</strong> This app is a personal tracking tool only. Always follow your doctor&rsquo;s instructions. Timing suggestions are based on your configured intervals, not clinical judgment. If in doubt, call your care team.
+    </div>
   </section>`;
 }
 function renderWarnings() {
@@ -917,6 +958,37 @@ function renderWarnings() {
       html+=`<div class="alert alert-warn"><strong>${esc(other.name)} + ${esc(med.name)} Separation</strong>Must wait at least ${med.conflictMin} minutes between these two medications</div>`;
     }
   });
+  // FDA Black Box: warn if both opioids and benzodiazepines are active
+  const activeNonArchived = MEDS.filter(m => !m.archived);
+  const hasOpioid = activeNonArchived.some(m => m.category === 'opioid');
+  const hasBenzo = activeNonArchived.some(m => m.category === 'benzodiazepine');
+  if (hasOpioid && hasBenzo) {
+    const bbExists = WARNINGS.some(w => w.title.toLowerCase().includes('respiratory') || w.title.toLowerCase().includes('black box'));
+    if (!bbExists) {
+      html += `<div class="alert alert-danger"><strong>⚠️ FDA Black Box Warning: Opioid + Benzodiazepine</strong>Concurrent use of opioids and benzodiazepines increases risk of respiratory depression, sedation, and death. Use the lowest effective doses and shortest duration. Monitor for unusual drowsiness or slow breathing.</div>`;
+    }
+  }
+  // FDA warning: opioid + gabapentin/pregabalin
+  const hasGaba = activeNonArchived.some(m => m.category === 'anticonvulsant' || ['gabapentin','pregabalin'].includes(m.id));
+  if (hasOpioid && hasGaba) {
+    html += `<div class="alert alert-warn"><strong>⚠️ FDA Warning: Opioid + Gabapentinoid</strong>Concurrent use of opioids and gabapentin/pregabalin may increase risk of respiratory depression. Monitor for unusual drowsiness, slow or difficult breathing.</div>`;
+  }
+  // Naloxone advisory when opioids are active
+  if (hasOpioid) {
+    html += `<div class="alert alert-warn"><strong>Naloxone (Narcan) Advisory</strong>Keep naloxone available when opioids are in use. Signs to administer: very slow or stopped breathing, blue lips, unresponsive. Naloxone is available OTC at most pharmacies.</div>`;
+  }
+  // Alcohol warning when any CNS depressant is active
+  const hasCNSDepressant = hasOpioid || hasBenzo || hasGaba;
+  if (hasCNSDepressant) {
+    html += `<div class="alert alert-warn"><strong>No Alcohol</strong>Do not drink alcohol while taking opioids, benzodiazepines, or gabapentinoids. Alcohol increases the risk of dangerous sedation and respiratory depression.</div>`;
+  }
+  // Warn if combination APAP meds are used alongside Tylenol
+  const hasTylenol = MEDS.some(m => !m.archived && m.trackTotal && (m.id === 'tylenol' || m.name.toLowerCase().includes('acetaminophen')));
+  const hasApapCombo = MEDS.some(m => !m.archived && m.apapPerTab > 0);
+  if (hasTylenol && hasApapCombo) {
+    const apapMeds = MEDS.filter(m => !m.archived && m.apapPerTab > 0).map(m => m.name);
+    html += `<div class="alert alert-danger"><strong>⚠️ Acetaminophen in Multiple Meds</strong>${esc(apapMeds.join(', '))} contain${apapMeds.length===1?'s':''} acetaminophen. This is automatically counted toward the Tylenol 24-hour limit (4000mg max). Do not take additional Tylenol without checking your total.</div>`;
+  }
   container.innerHTML=html;
   // Hide warnings section if nothing to show
   const section=document.getElementById('warnings-section');
@@ -926,13 +998,14 @@ function renderLog() {
   const previewEl=document.getElementById('log-preview');
   const fullEl=document.getElementById('log-full');
   const countEl=document.getElementById('log-count');
-  const sorted=[...state.doses].sort((a,b)=>new Date(b.time)-new Date(a.time));
+  const activeDoses = state.doses.filter(d => (d.actionType || 'dose') !== 'removed');
+  const sorted=[...activeDoses].sort((a,b)=>new Date(b.time)-new Date(a.time));
   const t=todayStr();
-  const todayTotal=state.doses.filter(d=>fmt(d.time,'date')===t).reduce((s,d)=>s+d.tabs,0);
+  const todayTotal=activeDoses.filter(d=>fmt(d.time,'date')===t).reduce((s,d)=>s+d.tabs,0);
   countEl.textContent = todayTotal > 0 ? `(${todayTotal} today)` : '';
   if(!sorted.length){previewEl.innerHTML='<div class="log-empty">No doses logged yet</div>';fullEl.innerHTML='';return;}
   const trackedTotals={};
-  [...state.doses].forEach(d => {
+  activeDoses.forEach(d => {
     const med = getMed(d.medId);
     if (med && med.trackTotal && (d.actionType || 'dose') !== 'skip') {
       trackedTotals[d.id] = rolling24hTotal(d.medId, d.time);
@@ -1043,8 +1116,8 @@ function dismissAlertBanner() {
 function fireNotification(medName, isOverdue) {
   if ('Notification' in window && Notification.permission === 'granted') {
     try {
-      new Notification(isOverdue ? medName + ' is overdue' : 'Time for ' + medName, {
-        body: isOverdue ? 'Tap to open tracker and log dose' : medName + ' is now available',
+      new Notification(isOverdue ? medName + ' — scheduled dose overdue' : medName + ' is now eligible', {
+        body: 'Check tracker before taking — verify no conflicts or limits',
         icon: '/icon.svg',
         tag: 'med-reminder-' + medName,
         renotify: true
@@ -1060,11 +1133,38 @@ function maybeRequestNotifications() {
   }
 }
 
-// Overdue detection on app resume
+// Overdue detection on app resume + timezone/clock drift detection
+let _lastMonotonicMs = performance.now();
+let _lastWallMs = Date.now();
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
+    // Clock drift detection: compare wall-clock jump vs monotonic jump
+    const monoElapsed = performance.now() - _lastMonotonicMs;
+    const wallElapsed = Date.now() - _lastWallMs;
+    const driftMin = Math.abs(wallElapsed - monoElapsed) / 60000;
+    if (driftMin > 5) {
+      showToast(`Phone clock shifted ~${Math.round(driftMin)}min — dose timers updated`, 5000);
+    }
+    // Timezone change detection
+    const currentTz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    if (CONFIG.scheduleTimezone && currentTz && CONFIG.scheduleTimezone !== currentTz) {
+      const banner = document.getElementById('tz-change-banner');
+      if (!banner) {
+        const div = document.createElement('div');
+        div.id = 'tz-change-banner';
+        div.className = 'card-warn';
+        div.style.cssText = 'margin:8px 12px;padding:10px;font-size:13px';
+        div.innerHTML = `⚠️ <strong>Timezone changed</strong> from ${esc(CONFIG.scheduleTimezone)} to ${esc(currentTz)}. Scheduled medication times may be shifted. <button onclick="CONFIG.scheduleTimezone='${currentTz}';save();this.parentElement.remove()" style="margin-left:8px;font-size:12px;padding:2px 8px;border:1px solid var(--border);border-radius:4px;background:var(--card);cursor:pointer">Update to ${esc(currentTz)}</button>`;
+        document.body.querySelector('.header')?.after(div) || document.body.prepend(div);
+      }
+    }
+    _lastMonotonicMs = performance.now();
+    _lastWallMs = Date.now();
     render();
     checkAlerts(true);
+  } else {
+    _lastMonotonicMs = performance.now();
+    _lastWallMs = Date.now();
   }
 });
 
@@ -1145,11 +1245,14 @@ function handleClear() {
 }
 
 async function confirmClearAllData() {
-  localStorage.removeItem(DOSES_KEY);
+  if (state.doses.length > 0) {
+    try { downloadFullBackup(); } catch(e) { console.warn('Auto-backup before clear failed:', e); }
+  }
   state = seedState();
-  await persistBundle('clear-doses');
+  save();
   render();
   closeModal();
+  showToast('Dose history cleared');
 }
 
 // === New Surgery Flow ===
@@ -1250,7 +1353,7 @@ function buildIntervalWarning(info) {
 function buildConflictWarning(info) {
   if (!info.conflictBlocked) return '';
   const conflictName = info.conflictMed ? info.conflictMed.name : info.med.conflictsWith;
-  return `<div class="warn-box"><strong>WARNING:</strong> ${esc(conflictName)} was taken ${minsToHM(info.conflictAgo)} ago. You should wait at least ${formatIntervalLabel(info.med.conflictMin)} between ${esc(conflictName)} and ${esc(info.med.name)}. Recommend waiting ${Math.ceil(info.conflictRemaining)} more minutes.</div>`;
+  return `<div class="warn-box"><strong>WARNING:</strong> ${esc(conflictName)} was taken ${minsToHM(info.conflictAgo)} ago. You should wait at least ${formatIntervalLabel(info.conflictMin || info.med.conflictMin)} between ${esc(conflictName)} and ${esc(info.med.name)}. Recommend waiting ${Math.ceil(info.conflictRemaining)} more minutes.</div>`;
 }
 function renderScheduledSkipButton(med, info) {
   if (!med || med.scheduleType !== 'scheduled' || !info || !info.isScheduled || info.minutesUntilEligible > 0) return '';
@@ -1305,6 +1408,8 @@ function renderNextUp() {
       <div class="nuc-dose">${esc(primary.med.dose)} &mdash; ${esc(primary.med.freq)}</div>
       <div class="nuc-status"><span class="dot ${primaryStatus.dot}"></span>${primaryStatus.text}</div>
       <div class="nuc-timer-bar"><div class="nuc-timer-fill" style="width:${primary.progressPct}%;background:${fillColor}"></div></div>
+      ${primary.conflictBlocked ? `<div class="warn-box" style="margin:8px 0;font-size:13px"><strong>⚠️ Conflict:</strong> Wait ${minsToHM(primary.conflictRemaining)} — ${esc(primary.conflictMed?.name || '')} interaction window</div>` : ''}
+      ${primary.med.trackTotal && primary.rollingTotal >= primary.med.maxDaily * 0.75 ? `<div class="warn-box" style="margin:8px 0;font-size:13px"><strong>⚠️ 24h total:</strong> ${primary.rollingTotal}${primary.med.unitLabel || 'mg'} of ${primary.med.maxDaily}${primary.med.unitLabel || 'mg'} max</div>` : ''}
       ${primary.shouldOfferReminder ? `<button class="btn-reminder" onclick="event.stopPropagation();downloadReminder('${primary.med.id}')" style="margin-bottom:12px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="13" r="7"/><path d="M12 9v4l2.5 1.5"/><path d="M5 3L2 6M22 6l-3-3"/></svg>Set phone alarm for when it's due</button>` : ''}
       <button class="btn-log-next" style="background:${primary.med.color}" onclick="handleLog('${primary.med.id}')">${btnLabel}</button>
     </div>`;
@@ -1364,6 +1469,7 @@ function renderCards() {
             ${med.brand?`<div class="card-brand">${esc(med.brand)}</div>`:''}
           </div>
           <div class="card-badge" style="background:${med.bgBadge};color:${med.color}">${esc(med.purpose)}</div>
+          <button class="card-edit-btn" onclick="event.stopPropagation();quickEditMed('${med.id}')" title="Edit ${esc(med.name)}" aria-label="Edit ${esc(med.name)} settings"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
         </div>
         <div class="card-dose">${esc(med.dose)} &mdash; ${esc(med.freq)}</div>
         ${scheduleText ? `<div class="card-note">${esc(scheduleText)}</div>` : ''}
@@ -1400,7 +1506,7 @@ function checkAlerts(forceOverdueCheck) {
   });
   if (newlyAvailable.length > 0) {
     const primary = newlyAvailable[0];
-    showAlertBanner('Time for ' + primary.med.name, false, primary.med.id);
+    showAlertBanner(primary.med.name + ' is now eligible', false, primary.med.id);
     playChime();
     if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
     fireNotification(primary.med.name, false);
@@ -1444,19 +1550,20 @@ function downloadReminder(medId) {
   const pad = n => String(n).padStart(2, '0');
   const icsDate = d => d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate()) + 'T' + pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
   const icsEsc = s => String(s).replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,');
+  const tzid = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const ics = [
     'BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//MedTracker//EN',
     'BEGIN:VEVENT',
     'UID:' + Date.now() + '-' + medId + '@medtracker',
-    'DTSTART:' + icsDate(nextTime),
-    'DTEND:' + icsDate(end),
-    'SUMMARY:Take ' + icsEsc(med.name) + (med.brand ? ' (' + icsEsc(med.brand) + ')' : ''),
-    'DESCRIPTION:' + icsEsc(med.dose) + ' - ' + icsEsc(med.freq),
+    'DTSTART;TZID=' + tzid + ':' + icsDate(nextTime),
+    'DTEND;TZID=' + tzid + ':' + icsDate(end),
+    'SUMMARY:' + icsEsc(med.name) + ' — check tracker' + (med.brand ? ' (' + icsEsc(med.brand) + ')' : ''),
+    'DESCRIPTION:' + icsEsc(med.dose) + ' - ' + icsEsc(med.freq) + '. Check Med Tracker app before taking — verify no conflicts or limits.',
     'BEGIN:VALARM','TRIGGER:-PT0M','ACTION:DISPLAY',
-    'DESCRIPTION:Time for ' + icsEsc(med.name),
+    'DESCRIPTION:' + icsEsc(med.name) + ' is now eligible — check tracker',
     'END:VALARM',
     'BEGIN:VALARM','TRIGGER:-PT5M','ACTION:DISPLAY',
-    'DESCRIPTION:' + icsEsc(med.name) + ' in 5 minutes',
+    'DESCRIPTION:' + icsEsc(med.name) + ' eligible in 5 minutes',
     'END:VALARM',
     'END:VEVENT','END:VCALENDAR'
   ].join('\r\n');
@@ -1494,7 +1601,7 @@ function handleLog(medId) {
       <div class="modal-actions">
         <button class="btn-cancel" onclick="closeModal()">Cancel</button>
         ${renderScheduledSkipButton(med, info)}
-        <button class="btn-confirm" onclick="confirmSingleDose('${medId}',1)">Confirm</button>
+        <button class="btn-confirm" onclick="confirmSingleDose('${medId}',1)">Log ${esc(med.name)}</button>
       </div>`);
   } catch(e) { console.error('handleLog error:',e); }
 }
@@ -1577,19 +1684,22 @@ function showTrackedModal(med) {
     <div class="modal-actions" style="margin-top:12px">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
       ${renderScheduledSkipButton(med, info)}
-      <button class="btn-confirm" onclick="confirmTracked()" ${allowedTabs.length ? '' : 'disabled'}>Log Dose</button>
+      <button class="btn-confirm" onclick="confirmTracked()" ${allowedTabs.length ? '' : 'disabled'}>Log ${esc(med.name)}</button>
     </div>`);
 }
 
-function confirmSingleDose(medId, tabs) {
+function confirmSingleDose(medId, tabs, userOverrideReason) {
   try {
     const med = getMed(medId);
     const doseTime = getDoseTime();
     const info = med ? getMedReadiness(med, doseTime) : null;
+    const overrideReason = userOverrideReason
+      ? `[USER] ${userOverrideReason} | [SYSTEM] ${info?.blockReason || ''}`
+      : (info ? info.blockReason : '');
     const added = addDose(medId, tabs||1, doseTime, {
       loggedBy: CONFIG.profile?.defaultLoggerName || getModalLoggerName(),
       overrideType: info && (info.conflictBlocked ? 'conflict' : info.intervalBlocked ? 'early' : ''),
-      overrideReason: info ? info.blockReason : ''
+      overrideReason
     });
     if (added) closeModal();
   }
@@ -1624,23 +1734,34 @@ function confirmTracked() {
 
 function showConflictModal(med) {
   const info = getMedReadiness(med);
-  const confirmLabel = info.canOverride ? 'Log Anyway' : 'Log Dose';
+  const confirmLabel = info.canOverride ? `Override — Log ${esc(med.name)}` : `Log ${esc(med.name)}`;
   const confirmClass = info.canOverride ? 'btn-danger' : 'btn-confirm';
+  const needsAck = info.conflictBlocked && info.canOverride;
   showModal(`<h3>Log ${esc(med.name)}${med.brand?' ('+esc(med.brand)+')':''} ${esc(med.dose)}</h3>${buildConflictWarning(info)}${buildIntervalWarning(info)}
     <p>${esc(med.purpose)} &mdash; 1 tablet</p>
     ${renderTimeSelector()}
     ${renderLoggerField()}
+    ${needsAck ? `<div style="margin-top:10px;padding:8px;border:1px solid var(--danger);border-radius:6px;background:var(--danger-bg,rgba(231,76,60,0.1))">
+      <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:13px;line-height:1.4">
+        <input type="checkbox" id="conflict-ack" onchange="document.getElementById('conflict-override-btn').disabled=!this.checked" style="margin-top:3px;min-width:20px;min-height:20px">
+        I understand this overrides a drug interaction safety window. I accept responsibility for this decision.
+      </label>
+      <div class="settings-field" style="margin-top:8px"><label style="font-size:12px">Reason for override (required)</label><input type="text" id="conflict-reason" placeholder="e.g. Doctor advised OK, patient in acute pain" oninput="document.getElementById('conflict-override-btn').disabled=!(document.getElementById('conflict-ack').checked && this.value.trim().length>=3)" style="font-size:14px"></div>
+    </div>` : ''}
     <div class="modal-actions" style="margin-top:14px">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
       ${renderScheduledSkipButton(med, info)}
-      <button class="${confirmClass}" onclick="confirmSingleDose('${med.id}',1)">${confirmLabel}</button>
+      <button id="conflict-override-btn" class="${confirmClass}" ${needsAck ? 'disabled' : ''} onclick="confirmSingleDose('${med.id}',1${needsAck ? `,document.getElementById('conflict-reason')?.value` : ''})">${confirmLabel}</button>
     </div>`);
 }
 
 // === Phase 4: Progressive Disclosure ===
 function getRecoveryDay() {
   if(!CONFIG.eventDate) return -1;
-  return Math.floor((now() - new Date(CONFIG.eventDate + 'T00:00:00')) / 86400000);
+  // Use noon-to-noon to avoid DST off-by-one (23h or 25h days)
+  const eventNoon = new Date(CONFIG.eventDate + 'T12:00:00');
+  const todayNoon = new Date(now()); todayNoon.setHours(12, 0, 0, 0);
+  return Math.round((todayNoon - eventNoon) / 86400000);
 }
 
 let warningsCollapsed = false;
@@ -1779,11 +1900,21 @@ function renderPatientSettingsSection() {
       <div class="settings-field"><label>Care Label</label><input type="text" value="${esc(profile.careLabel)}" placeholder="e.g. Post-op recovery" onchange="updateProfileField('careLabel',this.value)"></div>
       <div class="settings-field"><label>Default Logger Name</label><input type="text" value="${esc(profile.defaultLoggerName)}" placeholder="Who usually logs doses?" onchange="updateProfileField('defaultLoggerName',this.value)"></div>
     </div>
+    <div class="med-form-row">
+      <div class="settings-field"><label>Date of Birth</label><input type="date" value="${profile.dateOfBirth||''}" onchange="updateProfileField('dateOfBirth',this.value||'')"></div>
+      <div class="settings-field"><label>Blood Type</label><select onchange="updateProfileField('bloodType',this.value)"><option value="">Unknown</option>${['A+','A-','B+','B-','AB+','AB-','O+','O-'].map(t=>`<option value="${t}"${profile.bloodType===t?' selected':''}>${t}</option>`).join('')}</select></div>
+      <div class="settings-field"><label>Weight</label><input type="text" value="${esc(profile.weight)}" placeholder="e.g. 145 lbs" onchange="updateProfileField('weight',this.value)"></div>
+    </div>
+    <div class="med-form-row">
+      <div class="settings-field"><label>Surgeon / Doctor</label><input type="text" value="${esc(profile.surgeonName)}" placeholder="Name" onchange="updateProfileField('surgeonName',this.value)"></div>
+      <div class="settings-field"><label>Surgeon Phone</label><input type="text" value="${esc(profile.surgeonPhone)}" placeholder="Phone number" onchange="updateProfileField('surgeonPhone',this.value)"></div>
+    </div>
     <div class="settings-field"><label>Emergency Contact</label><input type="text" value="${esc(profile.emergencyContact)}" placeholder="Name and phone" onchange="updateProfileField('emergencyContact',this.value)"></div>
     <div class="med-form-row">
-      <div class="settings-field"><label>Allergies</label><textarea placeholder="One per line" onchange="updateProfileListField('allergies',this.value)">${esc((profile.allergies||[]).join('\n'))}</textarea></div>
+      <div class="settings-field"><label>Allergies</label><textarea placeholder="One per line" onchange="updateProfileListField('allergies',this.value);updateProfileField('allergiesReviewed',true)">${esc((profile.allergies||[]).join('\n'))}</textarea></div>
       <div class="settings-field"><label>Conditions</label><textarea placeholder="One per line" onchange="updateProfileListField('conditions',this.value)">${esc((profile.conditions||[]).join('\n'))}</textarea></div>
     </div>
+    <div class="settings-field" style="margin-bottom:4px"><label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" ${profile.allergiesReviewed?'checked':''} onchange="updateProfileField('allergiesReviewed',this.checked)"> I have reviewed allergies (${profile.allergies?.length ? profile.allergies.length + ' listed' : 'none'})</label><div class="hint">Check this even if patient has no known allergies, so handoff shows "NKDA" instead of "NOT REVIEWED".</div></div>
     <div class="settings-field"><label>Important Instructions</label><textarea placeholder="What should every caregiver know?" onchange="updateProfileField('importantInstructions',this.value)">${esc(profile.importantInstructions)}</textarea></div>
   </div>`;
 }
@@ -1804,7 +1935,8 @@ function renderMedicationSettingsSection() {
       <div class="med-list-actions"><button onclick="event.stopPropagation();moveMed(${i},-1)" title="Move up" ${i===0?'disabled':''}>↑</button><button onclick="event.stopPropagation();moveMed(${i},1)" title="Move down" ${i===MEDS.length-1?'disabled':''}>↓</button><button onclick="event.stopPropagation();toggleMedPinned(${i})" title="${med.pinned ? 'Unpin' : 'Pin'}">${med.pinned ? 'Unpin' : 'Pin'}</button><button onclick="event.stopPropagation();toggleMedArchived(${i})" title="${med.archived ? 'Restore' : 'Archive'}">${med.archived ? 'Restore' : 'Archive'}</button><button onclick="event.stopPropagation();deleteMed(${i})" title="Delete">Delete</button></div>
     </div>`;
   });
-  if (_editingMedIndex === -2) html += renderMedForm(null);
+  if (_editingMedIndex === -3) html += renderSettingsQuickAdd();
+  else if (_editingMedIndex === -2) html += renderMedForm(null);
   else html += `<button class="btn-add-med" onclick="startAddMed()">+ Add Medication</button>`;
   if (_editingMedIndex >= 0 && _editingMedIndex < MEDS.length) html += renderMedForm(MEDS[_editingMedIndex]);
   html += '</div>';
@@ -1907,6 +2039,10 @@ function renderMedForm(med) {
         <div class="settings-field"><label>Daily Max (mg)</label><input type="number" id="mf-maxDaily" value="${m.maxDaily||0}" min="0" placeholder="e.g. 4000"></div>
       </div>
       <div class="med-form-row">
+        <div class="settings-field"><label>APAP per Tab (mg)</label><input type="number" id="mf-apapPerTab" value="${m.apapPerTab||0}" min="0" placeholder="e.g. 325 for combo meds"></div>
+        <div class="settings-field"><label></label><div class="hint" style="padding-top:12px">For combination meds containing acetaminophen (e.g. Norco 5-325). This amount counts toward the Tylenol daily max.</div></div>
+      </div>
+      <div class="med-form-row">
         <div class="settings-field"><label>Supply On Hand</label><input type="number" id="mf-supplyOnHand" value="${m.supplyOnHand||0}" min="0" placeholder="How many remain?"></div>
         <div class="settings-field"><label>Supply Label</label><input type="text" id="mf-supplyLabel" value="${esc(m.supplyLabel||'units')}" placeholder="e.g. tablets"></div>
       </div>
@@ -1965,8 +2101,19 @@ function toggleAdvanced() {
   content.classList.toggle('open');
   if(chevron) chevron.style.transform = content.classList.contains('open') ? 'rotate(90deg)' : '';
 }
-function startAddMed() { _editingMedIndex = -2; _selectedMedColor = nextColor(); renderSettingsPanel(); }
+function startAddMed() { _editingMedIndex = -3; _quickAddSource = 'settings'; _quickAddSearch = ''; _quickAddSelected = null; renderSettingsPanel(); }
 function editMed(i) { _editingMedIndex = i; _selectedMedColor = resolveColor(MEDS[i].color); renderSettingsPanel(); }
+function quickEditMed(medId) {
+  const i = MEDS.findIndex(m => m.id === medId);
+  if (i === -1) return;
+  openSettings();
+  editMed(i);
+  // Scroll to the form after a tick so the DOM has rendered
+  setTimeout(() => {
+    const form = document.querySelector('.med-form');
+    if (form) form.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 100);
+}
 function cancelMedForm() { _editingMedIndex = -1; renderSettingsPanel(); }
 function updateConfigField(field, value) {
   CONFIG[field] = value;
@@ -2096,6 +2243,8 @@ function saveMedForm(index) {
     med.trackTotal = true;
     med.maxDaily = parseInt(document.getElementById('mf-maxDaily').value)||0;
   }
+  const apapPerTab = parseInt(document.getElementById('mf-apapPerTab').value);
+  if(apapPerTab > 0) med.apapPerTab = apapPerTab;
   const pairedWith = document.getElementById('mf-pairedWith').value;
   if(pairedWith) med.pairedWith = pairedWith;
   if(conflictsWith) {
@@ -2224,7 +2373,7 @@ function showToast(msg) {
   toast._tid = setTimeout(()=>toast.classList.remove('show'), 2500);
 }
 function downloadJsonFile(filename, payload) {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const blob = new Blob([JSON.stringify(payload, (k, v) => v === Infinity ? 99999 : v, 2)], { type: 'application/json' });
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
   link.download = filename;
@@ -2360,9 +2509,14 @@ function buildHandoffSummaryText() {
   const profile = CONFIG.profile || shared.createEmptyProfile();
   const lines = [];
   lines.push(`${CONFIG.patientName || 'Patient'} Medication Handoff`);
+  lines.push(`Generated: ${fmt(now())} (${Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local'})`);
   if (profile.careLabel) lines.push(profile.careLabel);
-  if (profile.emergencyContact) lines.push(`Emergency contact: ${profile.emergencyContact}`);
-  if (profile.allergies.length) lines.push(`Allergies: ${profile.allergies.join(', ')}`);
+  if (profile.dateOfBirth) lines.push(`DOB: ${profile.dateOfBirth} (age ${Math.floor((now() - new Date(profile.dateOfBirth)) / 31557600000)})`);
+  if (profile.bloodType) lines.push(`Blood type: ${profile.bloodType}`);
+  if (profile.weight) lines.push(`Weight: ${profile.weight}`);
+  if (profile.surgeonName) lines.push(`Surgeon: ${profile.surgeonName}${profile.surgeonPhone ? ` — ${profile.surgeonPhone}` : ''}`);
+  lines.push(`Emergency contact: ${profile.emergencyContact || 'NOT SET'}`);
+  lines.push(`Allergies: ${profile.allergies.length ? profile.allergies.join(', ') : (profile.allergiesReviewed ? 'NKDA' : 'NOT REVIEWED')}`);
   if (profile.conditions.length) lines.push(`Conditions: ${profile.conditions.join(', ')}`);
   if (profile.importantInstructions) lines.push(`Instructions: ${profile.importantInstructions}`);
   lines.push('');
@@ -2377,6 +2531,29 @@ function buildHandoffSummaryText() {
     if (supply !== null) lines.push(`  Supply left: ${supply} ${getSupplyLabel(med)}`);
     if (med.instructions) lines.push(`  Instructions: ${med.instructions}`);
   });
+  // Recent dose history (last 48 hours) — critical for ER visits
+  const cutoff48h = new Date(now().getTime() - 48 * 3600000);
+  const recentDoses = [...state.doses]
+    .filter(d => new Date(d.time) >= cutoff48h)
+    .sort((a, b) => new Date(b.time) - new Date(a.time));
+  if (recentDoses.length) {
+    lines.push('');
+    lines.push('RECENT DOSE HISTORY (last 48 hours)');
+    lines.push('-'.repeat(40));
+    recentDoses.forEach(d => {
+      const med = getMed(d.medId);
+      const name = med ? med.name : d.medId;
+      const action = d.actionType === 'skip' ? '[SKIPPED]' : `${d.tabs} tab${d.tabs !== 1 ? 's' : ''} (${d.mg}mg)`;
+      const override = d.overrideType ? ` [OVERRIDE: ${d.overrideType}]` : '';
+      const logger = d.loggedBy ? ` by ${d.loggedBy}` : '';
+      lines.push(`  ${fmt(d.time)} — ${name}: ${action}${override}${logger}`);
+      if (d.note) lines.push(`    Note: ${d.note}`);
+    });
+  }
+  lines.push('');
+  lines.push('---');
+  lines.push('NOT MEDICAL ADVICE. This is a personal tracking tool. Timing data is self-reported.');
+  lines.push('Always verify with prescribing physician. Generated by Med Tracker v' + APP_VERSION);
   return lines.join('\n');
 }
 function downloadHandoffSummary() {
@@ -2405,11 +2582,14 @@ function openHandoffSummary() {
   }).join('');
   showModal(`<h3>${esc(CONFIG.patientName || 'Patient')} handoff summary</h3>
     <p>${esc(profile.careLabel || 'Care summary')}</p>
-    ${profile.emergencyContact ? `<div class="warn-box"><strong>Emergency contact:</strong> ${esc(profile.emergencyContact)}</div>` : ''}
-    ${profile.allergies.length ? `<p><strong>Allergies:</strong> ${esc(profile.allergies.join(', '))}</p>` : ''}
+    ${profile.dateOfBirth ? `<p><strong>DOB:</strong> ${esc(profile.dateOfBirth)} (age ${Math.floor((now() - new Date(profile.dateOfBirth)) / 31557600000)}) ${profile.bloodType ? `&nbsp;|&nbsp;<strong>Blood:</strong> ${esc(profile.bloodType)}` : ''} ${profile.weight ? `&nbsp;|&nbsp;<strong>Wt:</strong> ${esc(profile.weight)}` : ''}</p>` : ''}
+    ${profile.surgeonName ? `<p><strong>Surgeon:</strong> ${esc(profile.surgeonName)}${profile.surgeonPhone ? ` — ${esc(profile.surgeonPhone)}` : ''}</p>` : ''}
+    <div class="warn-box"><strong>Emergency contact:</strong> ${profile.emergencyContact ? esc(profile.emergencyContact) : '<span style="color:var(--danger)">NOT SET</span>'}</div>
+    <p><strong>Allergies:</strong> ${profile.allergies.length ? esc(profile.allergies.join(', ')) : (profile.allergiesReviewed ? '<span style="color:var(--success)">NKDA</span>' : '<span style="color:var(--danger)">NOT REVIEWED</span>')}</p>
     ${profile.conditions.length ? `<p><strong>Conditions:</strong> ${esc(profile.conditions.join(', '))}</p>` : ''}
     ${profile.importantInstructions ? `<p><strong>Instructions:</strong> ${esc(profile.importantInstructions)}</p>` : ''}
     <div style="max-height:45vh;overflow:auto">${medsHtml || '<p>No active medications.</p>'}</div>
+    <div style="margin-top:10px;padding:8px;font-size:11px;color:var(--muted);border-top:1px solid var(--border);line-height:1.4"><strong>Not medical advice.</strong> This is a personal tracking tool. Timing data is self-reported. Always verify with prescribing physician.</div>
     <div class="modal-actions" style="margin-top:12px">
       <button class="btn-cancel" onclick="closeModal()">Close</button>
       <button class="btn-confirm" onclick="downloadHandoffSummary()">Download</button>
@@ -2420,11 +2600,14 @@ function buildMedicationListText() {
   const groups = getMedicationGroups();
   const lines = [];
   lines.push(`${CONFIG.patientName || 'Patient'} Medication List`);
-  lines.push(`Generated: ${fmt(now())}`);
-  lines.push(`Time zone: ${Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local'}`);
-  if (profile.allergies.length) lines.push(`Allergies: ${profile.allergies.join(', ')}`);
+  lines.push(`Generated: ${fmt(now())} (${Intl.DateTimeFormat().resolvedOptions().timeZone || 'Local'})`);
+  if (profile.dateOfBirth) lines.push(`DOB: ${profile.dateOfBirth} (age ${Math.floor((now() - new Date(profile.dateOfBirth)) / 31557600000)})`);
+  if (profile.bloodType) lines.push(`Blood type: ${profile.bloodType}`);
+  if (profile.weight) lines.push(`Weight: ${profile.weight}`);
+  lines.push(`Allergies: ${profile.allergies.length ? profile.allergies.join(', ') : (profile.allergiesReviewed ? 'NKDA' : 'NOT REVIEWED')}`);
   if (profile.conditions.length) lines.push(`Conditions: ${profile.conditions.join(', ')}`);
-  if (profile.emergencyContact) lines.push(`Emergency contact: ${profile.emergencyContact}`);
+  lines.push(`Emergency contact: ${profile.emergencyContact || 'NOT SET'}`);
+  if (profile.surgeonName) lines.push(`Surgeon: ${profile.surgeonName}${profile.surgeonPhone ? ` — ${profile.surgeonPhone}` : ''}`);
   if (profile.importantInstructions) lines.push(`Instructions: ${profile.importantInstructions}`);
   lines.push('');
   const appendMedGroup = (label, meds) => {
@@ -2450,6 +2633,8 @@ function buildMedicationListText() {
   appendMedGroup('Active medications', groups.active);
   appendMedGroup('Inactive medications', groups.inactive);
   appendMedGroup('Archived medications', groups.archived);
+  lines.push('');
+  lines.push('NOT MEDICAL ADVICE. Personal tracking tool only. Verify with prescribing physician.');
   return lines.join('\n').trim();
 }
 function downloadMedicationList() {
@@ -2637,13 +2822,25 @@ const TEMPLATES = shared.getTemplates();
 
 let _welcomeStep = 1;
 let _welcomeName = '';
+let _welcomeTemplateKey = null;
+let _welcomeConfig = null;
+let _reviewMeds = [];
+let _reviewIndex = 0;
+let _reviewEditing = false;
+let _reviewAddingNote = false;
+let _quickAddSearch = '';
+let _quickAddSource = 'welcome'; // 'welcome' or 'settings'
+let _quickAddSelected = null;
+
 function showWelcome() {
   const overlay = document.getElementById('welcome-overlay');
   overlay.style.display = 'flex';
   renderWelcomeStep();
 }
+
 function renderWelcomeStep() {
   const overlay = document.getElementById('welcome-overlay');
+
   if (_welcomeStep === 1) {
     overlay.innerHTML = `<div class="welcome-card">
       <h2>Welcome to Med Tracker</h2>
@@ -2652,6 +2849,7 @@ function renderWelcomeStep() {
       <button class="welcome-btn" onclick="welcomeNext()">Get Started</button>
     </div>`;
     setTimeout(()=>{const el=document.getElementById('welcome-name');if(el)el.focus();},100);
+
   } else if (_welcomeStep === 2) {
     overlay.innerHTML = `<div class="welcome-card">
       <h2>Choose a Starting Point</h2>
@@ -2660,14 +2858,42 @@ function renderWelcomeStep() {
         ${Object.entries(TEMPLATES).map(([key,tpl])=>`<div class="welcome-tpl" onclick="selectTemplate('${key}')"><strong>${tpl.label}</strong><span>${tpl.description}</span></div>`).join('')}
       </div>
     </div>`;
+
+  } else if (_welcomeStep === 3) {
+    // Info Checklist
+    overlay.innerHTML = `<div class="welcome-card">
+      <h2>Before You Start</h2>
+      <p>It helps to have these handy &mdash; but you can always come back and edit later.</p>
+      <div class="welcome-checklist">
+        <div class="welcome-checklist-item"><span class="wci-icon">&#x1F48A;</span><span>Prescription bottles (for exact doses)</span></div>
+        <div class="welcome-checklist-item"><span class="wci-icon">&#x1F4CB;</span><span>Discharge or post-op instructions</span></div>
+        <div class="welcome-checklist-item"><span class="wci-icon">&#x1F9D1;&#x200D;&#x2695;&#xFE0F;</span><span>Doctor or surgeon&rsquo;s contact info</span></div>
+        <div class="welcome-checklist-item"><span class="wci-icon">&#x1F3EA;</span><span>Pharmacy name and phone number</span></div>
+        <div class="welcome-checklist-item"><span class="wci-icon">&#x26A0;&#xFE0F;</span><span>Known allergies or drug sensitivities</span></div>
+      </div>
+      <div class="welcome-btn-row">
+        <button class="welcome-btn" onclick="welcomeChecklist()">I&rsquo;m Ready</button>
+        <button class="welcome-btn-secondary" onclick="welcomeChecklist()">Skip for Now</button>
+      </div>
+    </div>`;
+
+  } else if (_welcomeStep === 4) {
+    // Guided Med Review
+    renderReviewStep();
+
+  } else if (_welcomeStep === 5) {
+    // Quick-Add Picker
+    renderQuickAddInWelcome();
   }
 }
+
 function welcomeNext() {
   const nameInput = document.getElementById('welcome-name');
   _welcomeName = nameInput ? nameInput.value.trim() : '';
   _welcomeStep = 2;
   renderWelcomeStep();
 }
+
 function selectTemplate(key) {
   const tpl = TEMPLATES[key];
   if (!tpl) return;
@@ -2677,26 +2903,391 @@ function selectTemplate(key) {
     showBackupImportField();
     return;
   }
-  const templateConfig = tpl.buildConfig ? tpl.buildConfig() : shared.createDefaultConfig();
+  _welcomeTemplateKey = key;
+  _welcomeConfig = tpl.buildConfig ? tpl.buildConfig() : shared.createDefaultConfig();
+  _welcomeStep = 3;
+  renderWelcomeStep();
+}
+
+function applyWelcomeTemplate() {
   CONFIG.patientName = _welcomeName;
-  CONFIG.meds = templateConfig.meds.map(m=>({...m}));
-  CONFIG.warnings = templateConfig.warnings.map(w=>({...w}));
-  CONFIG.recoveryNotes = templateConfig.recoveryNotes.map(n=>({...n}));
+  CONFIG.meds = (_welcomeConfig.meds || []).map(m=>({...m}));
+  CONFIG.warnings = (_welcomeConfig.warnings || []).map(w=>({...w}));
+  CONFIG.recoveryNotes = (_welcomeConfig.recoveryNotes || []).map(n=>({...n}));
   CONFIG.profile = shared.normalizeProfile({
-    ...(templateConfig.profile || {}),
-    defaultLoggerName: CONFIG.profile?.defaultLoggerName || templateConfig.profile?.defaultLoggerName || '',
-    careLabel: templateConfig.profile?.careLabel || CONFIG.profile?.careLabel || ''
+    ...(_welcomeConfig.profile || {}),
+    defaultLoggerName: CONFIG.profile?.defaultLoggerName || _welcomeConfig.profile?.defaultLoggerName || '',
+    careLabel: _welcomeConfig.profile?.careLabel || CONFIG.profile?.careLabel || ''
   });
-  if(key === 'post-surgery') {
-    CONFIG.eventDate = CONFIG.eventDate || templateConfig.eventDate || null;
-    CONFIG.eventLabel = templateConfig.eventLabel || 'Surgery';
+  if (_welcomeTemplateKey === 'post-surgery') {
+    CONFIG.eventDate = CONFIG.eventDate || _welcomeConfig.eventDate || null;
+    CONFIG.eventLabel = _welcomeConfig.eventLabel || 'Surgery';
   }
   refreshDerivedConfig();
   saveConfig(CONFIG);
-  // Close welcome
+}
+
+function welcomeChecklist() {
+  // Apply the template config
+  applyWelcomeTemplate();
+  // If template has meds, go to review flow
+  if (CONFIG.meds.length > 0) {
+    _reviewMeds = CONFIG.meds.map((m, i) => ({ ...m, _originalIndex: i }));
+    _reviewIndex = 0;
+    _reviewEditing = false;
+    _reviewAddingNote = false;
+    _welcomeStep = 4;
+  } else {
+    // No meds — close welcome and show main app
+    closeWelcome();
+    return;
+  }
+  renderWelcomeStep();
+}
+
+function closeWelcome() {
   document.getElementById('welcome-overlay').style.display = 'none';
   initAppHeader();
   render();
+}
+
+// === Guided Med Review (Step 4) ===
+
+function renderReviewStep() {
+  const overlay = document.getElementById('welcome-overlay');
+  const activeMeds = _reviewMeds.filter(m => !m.archived);
+
+  if (_reviewIndex >= _reviewMeds.length) {
+    // All reviewed — show summary
+    const activeCount = activeMeds.length;
+    const removedCount = _reviewMeds.length - activeCount;
+    overlay.innerHTML = `<div class="welcome-card">
+      <h2>All medications reviewed!</h2>
+      <div class="review-done">
+        <div class="review-done-count">${activeCount} active${removedCount ? ', ' + removedCount + ' removed' : ''}</div>
+        <button class="welcome-btn" onclick="reviewAddAnother()" style="margin-bottom:8px">+ Add Another Medication</button>
+        <button class="welcome-btn-secondary" onclick="reviewDone()">Done &mdash; Let&rsquo;s Go</button>
+      </div>
+    </div>`;
+    return;
+  }
+
+  const med = _reviewMeds[_reviewIndex];
+  const warns = (med.warns || []).map(w => `<div class="review-card-warn">${esc(w)}</div>`).join('');
+  const schedInfo = med.scheduleType === 'scheduled' && med.scheduledTimes && med.scheduledTimes.length
+    ? `<div class="review-card-detail"><strong>Schedule:</strong> ${med.scheduledTimes.map(format12h).join(', ')}</div>` : '';
+
+  let editHtml = '';
+  if (_reviewEditing) {
+    editHtml = `<div class="review-inline-edit">
+      <div class="settings-field"><label>Name</label><input type="text" id="review-edit-name" value="${esc(med.name)}"></div>
+      <div class="settings-field"><label>Dose</label><input type="text" id="review-edit-dose" value="${esc(med.dose)}"></div>
+      <div class="settings-field"><label>Frequency</label><input type="text" id="review-edit-freq" value="${esc(med.freq)}"></div>
+      <div class="settings-field"><label>Instructions</label><input type="text" id="review-edit-instructions" value="${esc(med.instructions || '')}" placeholder="Helpful note for caregiver"></div>
+      <div class="welcome-btn-row" style="margin-top:12px">
+        <button class="welcome-btn" onclick="reviewSaveEdit()">Save</button>
+        <button class="welcome-btn-secondary" onclick="reviewCancelEdit()">Cancel</button>
+      </div>
+    </div>`;
+  }
+
+  let noteHtml = '';
+  if (_reviewAddingNote) {
+    noteHtml = `<div class="review-inline-edit" style="margin-top:12px">
+      <div class="settings-field"><label>Add a note</label><input type="text" id="review-note-input" placeholder="e.g. Take with food" autofocus></div>
+      <div class="welcome-btn-row">
+        <button class="welcome-btn" onclick="reviewSaveNote()">Save Note</button>
+        <button class="welcome-btn-secondary" onclick="reviewCancelNote()">Cancel</button>
+      </div>
+    </div>`;
+  }
+
+  overlay.innerHTML = `<div class="welcome-card">
+    <div class="review-progress">Reviewing medication ${_reviewIndex + 1} of ${_reviewMeds.length}</div>
+    <div class="review-card" style="border-left-color:${med.color || 'var(--success)'}">
+      <div class="review-card-name" style="color:${med.color || 'var(--text)'}">${esc(med.name)}</div>
+      ${med.brand ? `<div class="review-card-brand">${esc(med.brand)}</div>` : ''}
+      <div class="review-card-dose">${esc(med.dose)} &mdash; ${esc(med.freq)}</div>
+      ${med.purpose ? `<div class="review-card-detail"><strong>Purpose:</strong> ${esc(med.purpose)}</div>` : ''}
+      ${med.reason ? `<div class="review-card-detail"><strong>Reason:</strong> ${esc(med.reason)}</div>` : ''}
+      ${med.instructions ? `<div class="review-card-detail"><strong>Instructions:</strong> ${esc(med.instructions)}</div>` : ''}
+      ${schedInfo}
+      ${warns}
+      ${editHtml}
+      ${noteHtml}
+    </div>
+    ${!_reviewEditing && !_reviewAddingNote ? `<div class="review-actions">
+      <button class="review-btn-confirm" onclick="reviewConfirm()">Looks Good</button>
+      <button class="review-btn-edit" onclick="reviewEdit()">Edit</button>
+      <button class="review-btn-remove" onclick="reviewRemove()">Remove</button>
+      <button class="review-btn-note" onclick="reviewAddNote()">Add Note</button>
+    </div>` : ''}
+  </div>`;
+}
+
+function reviewConfirm() {
+  _reviewIndex++;
+  _reviewEditing = false;
+  _reviewAddingNote = false;
+  renderWelcomeStep();
+}
+
+function reviewEdit() {
+  _reviewEditing = true;
+  _reviewAddingNote = false;
+  renderWelcomeStep();
+}
+
+function reviewCancelEdit() {
+  _reviewEditing = false;
+  renderWelcomeStep();
+}
+
+function reviewSaveEdit() {
+  const med = _reviewMeds[_reviewIndex];
+  const name = (document.getElementById('review-edit-name')?.value || '').trim();
+  const dose = (document.getElementById('review-edit-dose')?.value || '').trim();
+  const freq = (document.getElementById('review-edit-freq')?.value || '').trim();
+  const instructions = (document.getElementById('review-edit-instructions')?.value || '').trim();
+  if (name) med.name = name;
+  if (dose) med.dose = dose;
+  if (freq) med.freq = freq;
+  med.instructions = instructions;
+  // Sync back to CONFIG
+  const configMed = CONFIG.meds[med._originalIndex];
+  if (configMed) {
+    configMed.name = med.name;
+    configMed.dose = med.dose;
+    configMed.freq = med.freq;
+    configMed.instructions = med.instructions;
+    saveConfig(CONFIG);
+  }
+  _reviewEditing = false;
+  _reviewIndex++;
+  renderWelcomeStep();
+}
+
+function reviewRemove() {
+  const med = _reviewMeds[_reviewIndex];
+  med.archived = true;
+  const configMed = CONFIG.meds[med._originalIndex];
+  if (configMed) {
+    configMed.archived = true;
+    saveConfig(CONFIG);
+  }
+  _reviewIndex++;
+  _reviewEditing = false;
+  _reviewAddingNote = false;
+  renderWelcomeStep();
+}
+
+function reviewAddNote() {
+  _reviewAddingNote = true;
+  _reviewEditing = false;
+  renderWelcomeStep();
+  setTimeout(()=>{const el=document.getElementById('review-note-input');if(el)el.focus();},100);
+}
+
+function reviewCancelNote() {
+  _reviewAddingNote = false;
+  renderWelcomeStep();
+}
+
+function reviewSaveNote() {
+  const med = _reviewMeds[_reviewIndex];
+  const note = (document.getElementById('review-note-input')?.value || '').trim();
+  if (note) {
+    med.instructions = med.instructions ? med.instructions + '. ' + note : note;
+    const configMed = CONFIG.meds[med._originalIndex];
+    if (configMed) {
+      configMed.instructions = med.instructions;
+      saveConfig(CONFIG);
+    }
+  }
+  _reviewAddingNote = false;
+  _reviewIndex++;
+  renderWelcomeStep();
+}
+
+function reviewAddAnother() {
+  _quickAddSource = 'welcome';
+  _quickAddSearch = '';
+  _quickAddSelected = null;
+  _welcomeStep = 5;
+  renderWelcomeStep();
+}
+
+function reviewDone() {
+  refreshDerivedConfig();
+  closeWelcome();
+}
+
+// === Quick-Add Common Meds (Step 5 / Settings) ===
+
+function getFilteredCommonMeds() {
+  const all = shared.getCommonMeds();
+  const existingIds = new Set(CONFIG.meds.map(m => m.id));
+  const available = all.filter(m => !existingIds.has(m.id));
+  if (!_quickAddSearch) return available;
+  const q = _quickAddSearch.toLowerCase();
+  return available.filter(m =>
+    m.name.toLowerCase().includes(q) ||
+    (m.brand && m.brand.toLowerCase().includes(q)) ||
+    m.purpose.toLowerCase().includes(q) ||
+    m.category.toLowerCase().includes(q)
+  );
+}
+
+function renderQuickAddList() {
+  const filtered = getFilteredCommonMeds();
+  let html = filtered.map(m =>
+    `<div class="quick-add-item" onclick="quickAddSelect('${esc(m.id)}')">
+      <div class="quick-add-item-name">${esc(m.name)}${m.brand ? ` <span style="font-weight:400;color:var(--muted)">(${esc(m.brand)})</span>` : ''}</div>
+      <div class="quick-add-item-info">${esc(m.dose)} &middot; ${esc(m.purpose)}</div>
+    </div>`
+  ).join('');
+  html += `<button class="quick-add-custom" onclick="quickAddCustom()">+ Custom medication &mdash; enter details manually</button>`;
+  return html;
+}
+
+function renderQuickAddConfirmForm() {
+  const med = _quickAddSelected;
+  if (!med) return '';
+  return `<div class="quick-add-confirm">
+    <h3 style="margin:0 0 12px;font-size:17px">Add ${esc(med.name)}?</h3>
+    <div class="settings-field"><label>Name</label><input type="text" id="qa-name" value="${esc(med.name)}"></div>
+    <div class="med-form-row">
+      <div class="settings-field"><label>Dose</label><input type="text" id="qa-dose" value="${esc(med.dose)}"></div>
+      <div class="settings-field"><label>Purpose</label><input type="text" id="qa-purpose" value="${esc(med.purpose)}"></div>
+    </div>
+    <div class="settings-field"><label>Frequency</label><input type="text" id="qa-freq" value="${esc(med.freq)}"></div>
+    <div class="settings-field"><label>Instructions</label><input type="text" id="qa-instructions" value="${esc(med.instructions || '')}" placeholder="Helpful note for caregiver"></div>
+    <div class="welcome-btn-row" style="margin-top:12px">
+      <button class="welcome-btn" onclick="quickAddConfirm()">Add Medication</button>
+      <button class="welcome-btn-secondary" onclick="quickAddBack()">Back</button>
+    </div>
+  </div>`;
+}
+
+function renderQuickAddInWelcome() {
+  const overlay = document.getElementById('welcome-overlay');
+  let content;
+  if (_quickAddSelected) {
+    content = renderQuickAddConfirmForm();
+  } else {
+    content = `<h2>Add a Medication</h2>
+      <input class="quick-add-search" type="text" placeholder="Search medications..." value="${esc(_quickAddSearch)}" oninput="quickAddFilter(this.value)" id="qa-search">
+      <div class="quick-add-list">${renderQuickAddList()}</div>
+      <button class="welcome-btn-secondary" onclick="quickAddCancel()" style="margin-top:8px">Back to Review</button>`;
+  }
+  overlay.innerHTML = `<div class="welcome-card">${content}</div>`;
+  if (!_quickAddSelected) {
+    setTimeout(()=>{const el=document.getElementById('qa-search');if(el)el.focus();},100);
+  }
+}
+
+function quickAddFilter(value) {
+  _quickAddSearch = value;
+  const listEl = document.querySelector('.quick-add-list');
+  if (listEl) listEl.innerHTML = renderQuickAddList();
+}
+
+function quickAddSelect(medId) {
+  const meds = shared.getCommonMeds();
+  _quickAddSelected = meds.find(m => m.id === medId) || null;
+  if (_quickAddSource === 'welcome') {
+    renderQuickAddInWelcome();
+  } else {
+    renderSettingsPanel();
+  }
+}
+
+function quickAddBack() {
+  _quickAddSelected = null;
+  if (_quickAddSource === 'welcome') {
+    renderQuickAddInWelcome();
+  } else {
+    renderSettingsPanel();
+  }
+}
+
+function quickAddConfirm() {
+  const name = (document.getElementById('qa-name')?.value || '').trim();
+  if (!name) { showToast('Name is required'); return; }
+  const baseMed = _quickAddSelected || {};
+  const newMed = shared.normalizeMed({
+    ...baseMed,
+    name: name,
+    dose: (document.getElementById('qa-dose')?.value || '').trim() || baseMed.dose,
+    purpose: (document.getElementById('qa-purpose')?.value || '').trim() || baseMed.purpose,
+    freq: (document.getElementById('qa-freq')?.value || '').trim() || baseMed.freq,
+    instructions: (document.getElementById('qa-instructions')?.value || '').trim(),
+    color: nextColor()
+  });
+  // Ensure unique ID
+  let id = newMed.id;
+  let suffix = 2;
+  while (CONFIG.meds.some(m => m.id === id)) { id = newMed.id + '-' + suffix++; }
+  newMed.id = id;
+  CONFIG.meds.push(newMed);
+  saveConfig(CONFIG);
+  refreshDerivedConfig();
+  _quickAddSelected = null;
+  _quickAddSearch = '';
+  if (_quickAddSource === 'welcome') {
+    // Update review meds list and go back to review summary
+    _reviewMeds = CONFIG.meds.map((m, i) => ({ ...m, _originalIndex: i }));
+    _reviewIndex = _reviewMeds.length; // Jump to summary
+    _welcomeStep = 4;
+    renderWelcomeStep();
+    showToast(name + ' added');
+  } else {
+    _editingMedIndex = -1;
+    renderSettingsPanel();
+    render();
+    showToast(name + ' added');
+  }
+}
+
+function quickAddCustom() {
+  _quickAddSelected = null;
+  _quickAddSearch = '';
+  if (_quickAddSource === 'welcome') {
+    // Close welcome and open settings with blank med form
+    closeWelcome();
+    openSettings();
+    startAddMed();
+  } else {
+    // In settings — show the blank form (original startAddMed behavior)
+    _editingMedIndex = -2;
+    _selectedMedColor = nextColor();
+    renderSettingsPanel();
+  }
+}
+
+function renderSettingsQuickAdd() {
+  if (_quickAddSelected) {
+    return renderQuickAddConfirmForm();
+  }
+  return `<div style="margin-top:12px">
+    <h3>Add a Medication</h3>
+    <input class="quick-add-search" type="text" placeholder="Search medications..." value="${esc(_quickAddSearch)}" oninput="quickAddFilter(this.value)" id="qa-search-settings">
+    <div class="quick-add-list">${renderQuickAddList()}</div>
+    <button class="welcome-btn-secondary" onclick="cancelMedForm()" style="margin-top:8px">Cancel</button>
+  </div>`;
+}
+
+function quickAddCancel() {
+  _quickAddSelected = null;
+  _quickAddSearch = '';
+  if (_quickAddSource === 'welcome') {
+    _welcomeStep = 4;
+    _reviewIndex = _reviewMeds.length; // back to summary
+    renderWelcomeStep();
+  } else {
+    _editingMedIndex = -1;
+    renderSettingsPanel();
+  }
 }
 
 // Check for first-run
@@ -2816,6 +3407,7 @@ Object.assign(window, {
   downloadSupportBundle,
   downloadHandoffSummary,
   editMed,
+  quickEditMed,
   exportConfig,
   handleClear,
   handleEditDose,
@@ -2865,7 +3457,24 @@ Object.assign(window, {
   showNewSurgeryWizard,
   applyNewSurgeryWizard,
   toggleArchivedLog,
-  renderRecoveryNote
+  renderRecoveryNote,
+  welcomeChecklist,
+  reviewConfirm,
+  reviewEdit,
+  reviewCancelEdit,
+  reviewSaveEdit,
+  reviewRemove,
+  reviewAddNote,
+  reviewCancelNote,
+  reviewSaveNote,
+  reviewAddAnother,
+  reviewDone,
+  quickAddFilter,
+  quickAddSelect,
+  quickAddBack,
+  quickAddConfirm,
+  quickAddCustom,
+  quickAddCancel
 });
 
 

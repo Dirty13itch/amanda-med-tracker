@@ -145,8 +145,9 @@ export function createStorageManager({ onError } = {}) {
     const normalized = normalizeBundle(bundle, backend, reason);
     normalized.meta.lastSnapshotAt = new Date().toISOString();
     const snapshot = createSnapshot(normalized);
-    mirrorLegacyKeys(normalized);
 
+    // Write IDB first, then mirror to localStorage on success (or IDB unavailability)
+    // This prevents split-brain where localStorage has new data but IDB has old data
     try {
       await writeStoreValues(cache, [
         ['config', normalized.config],
@@ -155,8 +156,11 @@ export function createStorageManager({ onError } = {}) {
         ['snapshot', snapshot]
       ]);
       normalized.meta.backend = 'indexeddb';
+      mirrorLegacyKeys(normalized);
     } catch (error) {
       if (typeof onError === 'function') onError(error);
+      // IDB failed — fall back to localStorage as sole store
+      mirrorLegacyKeys(normalized);
       normalized.meta.backend = 'localStorage';
     }
     return normalized;
